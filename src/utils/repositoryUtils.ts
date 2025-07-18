@@ -24,6 +24,86 @@ export const formatDate = (dateString: string) => {
      }
 };
 
+// Description formatting utility
+export const formatDescription = (description: string | null): string => {
+     if (!description) {
+          return "No description available";
+     }
+
+     // Trim whitespace and check if it's effectively empty
+     const trimmedDescription = description.trim();
+
+     if (trimmedDescription === "") {
+          return "No description available";
+     }
+
+     // Check if description is just placeholder text or very short
+     if (trimmedDescription.length < 3) {
+          return "No description available";
+     }
+
+     // Check for common placeholder patterns
+     const placeholderPatterns = [
+          /^\.+$/, // Only dots
+          /^-+$/, // Only dashes
+          /^_+$/, // Only underscores
+          /^##+$/, // Only hashtags
+          /^todo$/i, // Just "todo"
+          /^tbd$/i, // "To be determined"
+          /^wip$/i, // "Work in progress"
+          /^n\/a$/i, // "Not applicable"
+          /^none$/i, // "None"
+          /^empty$/i, // "Empty"
+          /^null$/i, // "Null"
+          /^undefined$/i, // "Undefined"
+          /^test$/i, // "Test"
+          /^example$/i, // "Example"
+          /^sample$/i, // "Sample"
+          /^placeholder$/i, // "Placeholder"
+          /^description$/i, // "Description"
+          /^untitled$/i, // "Untitled"
+     ];
+
+     for (const pattern of placeholderPatterns) {
+          if (pattern.test(trimmedDescription)) {
+               return "No description available";
+          }
+     }
+
+     // Check if it's just repeated characters
+     const repeatedCharPattern = /^(.)\1{2,}$/;
+     if (repeatedCharPattern.test(trimmedDescription)) {
+          return "No description available";
+     }
+
+     // Check if it's just special characters without meaningful content
+     const specialCharsOnly = /^[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?`~\s]+$/;
+     if (specialCharsOnly.test(trimmedDescription)) {
+          return "No description available";
+     }
+
+     // Clean up the description for better display
+     let cleanDescription = trimmedDescription;
+
+     // Remove excessive whitespace
+     cleanDescription = cleanDescription.replace(/\s+/g, ' ');
+
+     // Capitalize first letter if it's not already
+     if (cleanDescription.length > 0 && cleanDescription[0] !== cleanDescription[0].toUpperCase()) {
+          cleanDescription = cleanDescription[0].toUpperCase() + cleanDescription.slice(1);
+     }
+
+     // Ensure it ends with proper punctuation if it doesn't already
+     if (cleanDescription.length > 0 && !/[.!?]$/.test(cleanDescription)) {
+          // Only add period if it's not a fragment or title-like
+          if (cleanDescription.length > 10 && !/^[A-Z][a-z]+$/.test(cleanDescription)) {
+               cleanDescription += '.';
+          }
+     }
+
+     return cleanDescription;
+};
+
 // Popular programming languages list
 export const popularLanguages = [
      "JavaScript",

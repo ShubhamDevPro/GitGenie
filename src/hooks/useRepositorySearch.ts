@@ -1,22 +1,7 @@
 import { useState, useRef } from "react";
+import { Repository } from "../types/repository";
 
 // Types
-export interface Repository {
-     id: number;
-     name: string;
-     full_name: string;
-     description: string | null;
-     html_url: string;
-     stargazers_count: number;
-     forks_count: number;
-     language: string | null;
-     pushed_at: string;
-     owner: {
-          login: string;
-          avatar_url: string;
-     };
-}
-
 interface GitHubApiResponse {
      total_count: number;
      items: Repository[];
@@ -50,6 +35,7 @@ export const useRepositorySearch = () => {
 
      // Request tracking
      const currentRequestRef = useRef<number>(0);
+     const currentReadmeRequestRef = useRef<number>(0);
 
      const searchRepositories = async (
           query: string,
@@ -138,7 +124,7 @@ export const useRepositorySearch = () => {
 
                for (let attempt = 0; attempt <= maxRetries; attempt++) {
                     try {
-                         const apiUrl = `https://api.github.com/search/repositories?q=${encodeURIComponent(
+                         const apiUrl = `/api/github/search?q=${encodeURIComponent(
                               searchQuery
                          )}&sort=${finalSortBy}&order=${finalOrderBy}&per_page=10&page=${page}`;
 
@@ -154,16 +140,16 @@ export const useRepositorySearch = () => {
                          const response = await fetch(apiUrl);
 
                          if (!response.ok) {
-                              const errorText = await response.text();
+                              const errorData = await response.json();
                               console.error(
                                    "API Error:",
                                    response.status,
                                    response.statusText,
-                                   errorText
+                                   errorData
                               );
 
                               // Handle specific error cases
-                              if (response.status === 403) {
+                              if (response.status === 429) {
                                    // For rate limiting, wait longer before retry
                                    if (attempt < maxRetries) {
                                         console.log(
@@ -176,7 +162,7 @@ export const useRepositorySearch = () => {
                                         continue;
                                    }
                                    throw new Error(
-                                        "GitHub API rate limit reached. Please wait a moment and try clicking the page again, or try a different search."
+                                        errorData.error || "GitHub API rate limit reached. Please wait a moment and try again."
                                    );
                               } else if (response.status === 422) {
                                    throw new Error(
@@ -188,7 +174,7 @@ export const useRepositorySearch = () => {
                                    );
                               } else {
                                    throw new Error(
-                                        `GitHub API error: ${response.status} ${response.statusText}`
+                                        errorData.error || `GitHub API error: ${response.status} ${response.statusText}`
                                    );
                               }
                          }
@@ -241,33 +227,51 @@ export const useRepositorySearch = () => {
      };
 
      const fetchReadme = async (owner: string, repo: string) => {
+          // Cancel any previous README request and create new request ID
+          const requestId = ++currentReadmeRequestRef.current;
+
           setReadmeLoading(true);
+          setReadme(""); // Clear previous README content
+
           try {
-               const response = await fetch(
-                    `https://api.github.com/repos/${owner}/${repo}/readme`,
-                    {
-                         headers: {
-                              Accept: "application/vnd.github.v3.raw",
-                         },
-                    }
-               );
+               // Use our API route instead of direct GitHub API call
+               const apiUrl = `/api/github/readme?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`;
+
+               const response = await fetch(apiUrl);
+
+               // Check if this request was cancelled
+               if (requestId !== currentReadmeRequestRef.current) {
+                    return;
+               }
 
                if (response.ok) {
-                    const readmeText = await response.text();
-                    setReadme(
-                         readmeText.slice(0, 1000) + (readmeText.length > 1000 ? "..." : "")
-                    );
-               } else {
-                    setReadme("README not available");
-               }
-          } catch {
-               setReadme("Failed to load README");
-          } finally {
-               setReadmeLoading(false);
-          }
-     };
+                    const data = await response.json();
 
-     const handleSearch = (e: React.FormEvent) => {
+                    // Check again if this request was cancelled
+                    if (requestId !== currentReadmeRequestRef.current) {
+                         return;
+                    }
+
+                    setReadme(data.content);
+               } else {
+                    const errorData = await response.json();
+                    console.error("README fetch error:", response.status, response.statusText, errorData);
+                    setReadme(errorData.error || "Unable to load README at this time");
+               }
+          } catch (error) {
+               // Check if this request was cancelled
+               if (requestId !== currentReadmeRequestRef.current) {
+                    return;
+               }
+               console.error("README fetch error:", error);
+               setReadme("Failed to load README - please check your internet connection");
+          } finally {
+               // Only clear loading if this is still the current request
+               if (requestId === currentReadmeRequestRef.current) {
+                    setReadmeLoading(false);
+               }
+          }
+     }; const handleSearch = (e: React.FormEvent) => {
           e.preventDefault();
           setCurrentPage(1);
           searchRepositories(searchQuery, 1);
@@ -301,7 +305,14 @@ export const useRepositorySearch = () => {
      const handleRepoClick = (repo: Repository) => {
           setSelectedRepo(repo);
           setReadme("");
+          setReadmeLoading(true);
           fetchReadme(repo.owner.login, repo.name);
+     };
+
+     const retryReadme = () => {
+          if (selectedRepo) {
+               fetchReadme(selectedRepo.owner.login, selectedRepo.name);
+          }
      };
 
      return {
@@ -337,5 +348,6 @@ export const useRepositorySearch = () => {
           resetFilters,
           handlePageChange,
           handleRepoClick,
+          retryReadme,
      };
 };

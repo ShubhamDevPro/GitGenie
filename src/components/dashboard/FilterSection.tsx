@@ -1,26 +1,11 @@
 import React from "react";
+import { Repository } from "../../types/repository";
 
 interface OverrideFilters {
   language?: string;
   dateRange?: string;
   sortBy?: string;
   orderBy?: string;
-}
-
-interface Repository {
-  id: number;
-  name: string;
-  full_name: string;
-  description: string | null;
-  html_url: string;
-  stargazers_count: number;
-  forks_count: number;
-  language: string | null;
-  pushed_at: string;
-  owner: {
-    login: string;
-    avatar_url: string;
-  };
 }
 
 interface FilterSectionProps {

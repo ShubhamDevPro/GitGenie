@@ -4,7 +4,7 @@ import { userService } from "@/lib/userService";
 
 export async function DELETE(
     request: NextRequest,
-    { params }: { params: { projectId: string } }
+    { params }: { params: Promise<{ projectId: string }> | { projectId: string } }
 ) {
     try {
         // Check authentication
@@ -16,7 +16,9 @@ export async function DELETE(
             );
         }
 
-        const { projectId } = params;
+        // Handle both Promise and direct params for Next.js compatibility
+        const resolvedParams = await Promise.resolve(params);
+        const { projectId } = resolvedParams;
 
         if (!projectId) {
             return NextResponse.json(

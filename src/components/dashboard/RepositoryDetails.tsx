@@ -1,7 +1,9 @@
-import React from "react";
+import React, { useState } from "react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { formatDate, formatDescription } from "../../utils/repositoryUtils";
 import { Repository } from "../../types/repository";
+import { useRepositoryClone } from "../../hooks/useRepositoryClone";
 import {
   StarIcon,
   ForkIcon,
@@ -24,6 +26,32 @@ export const RepositoryDetails: React.FC<RepositoryDetailsProps> = ({
   readmeLoading,
   onRetryReadme,
 }) => {
+  const { cloneRepository, isCloning, cloneError, cloneSuccess, clearMessages } = useRepositoryClone();
+  const [showCloneMessage, setShowCloneMessage] = useState(false);
+  const router = useRouter();
+
+  const handleCloneClick = async () => {
+    if (!selectedRepo) return;
+
+    clearMessages();
+    const result = await cloneRepository({
+      githubOwner: selectedRepo.owner.login,
+      githubRepo: selectedRepo.name,
+      githubUrl: selectedRepo.html_url,
+      description: selectedRepo.description || undefined,
+    });
+
+    if (result) {
+      setShowCloneMessage(true);
+      // Show success message briefly, then redirect to repositories page
+      setTimeout(() => {
+        setShowCloneMessage(false);
+        clearMessages();
+        router.push('/my-repositories');
+      }, 2000); // Reduced time to 2 seconds for better UX
+    }
+  };
+
   return (
     <div className="hidden lg:block lg:sticky lg:top-24 lg:h-fit">
       {selectedRepo ? (
@@ -96,19 +124,51 @@ export const RepositoryDetails: React.FC<RepositoryDetailsProps> = ({
               </a>
 
               <button
-                onClick={() =>
-                  navigator.clipboard.writeText(
-                    `git clone ${selectedRepo.html_url}.git`
-                  )
-                }
-                className="inline-flex items-center justify-center px-4 py-2 sm:px-6 sm:py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-medium rounded-lg transition-all duration-300 transform hover:scale-105 text-sm sm:text-base"
-                title="Copy clone command to clipboard"
+                onClick={handleCloneClick}
+                disabled={isCloning}
+                className={`inline-flex items-center justify-center px-4 py-2 sm:px-6 sm:py-3 font-medium rounded-lg transition-all duration-300 transform hover:scale-105 text-sm sm:text-base ${isCloning
+                    ? "bg-gray-400 cursor-not-allowed"
+                    : "bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
+                  } text-white`}
+                title="Clone repository to your private workspace"
               >
                 <CloneIcon className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
-                <span className="sm:hidden">Clone</span>
-                <span className="hidden sm:inline">Clone Repo</span>
+                {isCloning ? (
+                  <>
+                    <span className="sm:hidden">Cloning...</span>
+                    <span className="hidden sm:inline">Cloning Repository...</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="sm:hidden">Clone</span>
+                    <span className="hidden sm:inline">Clone to Workspace</span>
+                  </>
+                )}
               </button>
             </div>
+
+            {/* Clone status messages */}
+            {(showCloneMessage && cloneSuccess) && (
+              <div className="mt-4 p-3 bg-green-100 dark:bg-green-900/20 border border-green-300 dark:border-green-700 rounded-lg">
+                <p className="text-sm text-green-800 dark:text-green-200">
+                  ✅ {cloneSuccess}
+                </p>
+              </div>
+            )}
+
+            {cloneError && (
+              <div className="mt-4 p-3 bg-red-100 dark:bg-red-900/20 border border-red-300 dark:border-red-700 rounded-lg">
+                <p className="text-sm text-red-800 dark:text-red-200">
+                  ❌ {cloneError}
+                </p>
+                <button
+                  onClick={clearMessages}
+                  className="mt-2 text-xs text-red-600 dark:text-red-400 hover:underline"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
           </div>
 
           {/* README Section */}

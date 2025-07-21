@@ -128,15 +128,6 @@ export const useRepositorySearch = () => {
                               searchQuery
                          )}&sort=${finalSortBy}&order=${finalOrderBy}&per_page=10&page=${page}`;
 
-                         console.log("API Request:", {
-                              query: searchQuery,
-                              sort: finalSortBy,
-                              order: finalOrderBy,
-                              page,
-                              attempt: attempt + 1,
-                              url: apiUrl,
-                         });
-
                          const response = await fetch(apiUrl);
 
                          if (!response.ok) {
@@ -152,10 +143,6 @@ export const useRepositorySearch = () => {
                               if (response.status === 429) {
                                    // For rate limiting, wait longer before retry
                                    if (attempt < maxRetries) {
-                                        console.log(
-                                             `Rate limited, waiting ${(attempt + 1) * 2000
-                                             }ms before retry...`
-                                        );
                                         await new Promise((resolve) =>
                                              setTimeout(resolve, (attempt + 1) * 2000)
                                         );
@@ -186,13 +173,6 @@ export const useRepositorySearch = () => {
                               return;
                          }
 
-                         console.log("API Response:", {
-                              totalCount: data.total_count,
-                              itemsCount: data.items?.length,
-                              firstItem: data.items?.[0]?.name,
-                              attempt: attempt + 1,
-                         });
-
                          setRepositories(data.items);
                          setTotalCount(data.total_count);
                          setError("");
@@ -201,7 +181,6 @@ export const useRepositorySearch = () => {
                          if (attempt === maxRetries) {
                               throw error;
                          }
-                         console.log(`Attempt ${attempt + 1} failed, retrying...`);
                          await new Promise((resolve) =>
                               setTimeout(resolve, (attempt + 1) * 1000)
                          );

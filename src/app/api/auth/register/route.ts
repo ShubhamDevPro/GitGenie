@@ -29,6 +29,10 @@ export async function POST(request: NextRequest) {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 12);
 
+    // Generate avatar URL for credentials users
+    // Using a placeholder service that generates avatars based on initials
+    const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&size=200&background=6366f1&color=ffffff&format=png`;
+
     // Create user
     const user = await prisma.user.create({
       data: {
@@ -36,6 +40,7 @@ export async function POST(request: NextRequest) {
         email,
         password: hashedPassword,
         isVerified: false,
+        image: avatarUrl, // Add profile picture for credentials users
       },
     });
 
@@ -48,6 +53,7 @@ export async function POST(request: NextRequest) {
           name: user.name,
           email: user.email,
           isVerified: user.isVerified,
+          image: user.image,
         },
       },
       { status: 201 }

@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
+import { useSession } from "@/hooks/useSession";
 
 export default function RegisterPage() {
   const [formData, setFormData] = useState({
@@ -17,7 +18,32 @@ export default function RegisterPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [acceptTerms, setAcceptTerms] = useState(false);
+  const [error, setError] = useState("");
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const { isAuthenticated, isLoading: sessionLoading, session } = useSession();
+
+  // Get callback URL from search params
+  const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (isAuthenticated && !sessionLoading) {
+      router.push(callbackUrl);
+    }
+  }, [isAuthenticated, sessionLoading, router, callbackUrl]);
+
+  // Show loading if session is still loading
+  if (sessionLoading) {
+    return (
+      <div className="h-screen bg-gradient-to-br from-green-50 via-white to-blue-50 dark:from-gray-900 dark:via-gray-800 dark:to-blue-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-green-200 border-t-green-600 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({
@@ -28,14 +54,15 @@ export default function RegisterPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError("");
 
     if (formData.password !== formData.confirmPassword) {
-      alert("Passwords do not match!");
+      setError("Passwords do not match!");
       return;
     }
 
     if (!acceptTerms) {
-      alert("Please accept the terms and conditions");
+      setError("Please accept the terms and conditions");
       return;
     }
 
@@ -56,14 +83,26 @@ export default function RegisterPage() {
       });
 
       if (response.ok) {
-        router.push("/login");
+        // Auto-login after successful registration
+        const result = await signIn("credentials", {
+          email: formData.email,
+          password: formData.password,
+          redirect: false,
+        });
+
+        if (result?.ok) {
+          router.push(callbackUrl);
+        } else {
+          // If auto-login fails, redirect to login page
+          router.push(`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`);
+        }
       } else {
-        const error = await response.json();
-        alert(error.message || "Registration failed");
+        const errorData = await response.json();
+        setError(errorData.message || "Registration failed");
       }
     } catch (error) {
       console.error("Registration error:", error);
-      alert("An error occurred during registration");
+      setError("An error occurred during registration");
     } finally {
       setIsLoading(false);
     }
@@ -71,25 +110,25 @@ export default function RegisterPage() {
 
   const handleGoogleSignIn = async () => {
     try {
-      await signIn("google", { 
-        callbackUrl: "/dashboard",
-        redirect: true 
+      await signIn("google", {
+        callbackUrl,
+        redirect: true,
       });
     } catch (error) {
       console.error("Google sign-in error:", error);
-      alert("Google sign-in failed");
+      setError("Google sign-in failed");
     }
   };
 
   const handleGitHubSignIn = async () => {
     try {
-      await signIn("github", { 
-        callbackUrl: "/dashboard",
-        redirect: true 
+      await signIn("github", {
+        callbackUrl,
+        redirect: true,
       });
     } catch (error) {
       console.error("GitHub sign-in error:", error);
-      alert("GitHub sign-in failed");
+      setError("GitHub sign-in failed");
     }
   };
 
@@ -429,6 +468,13 @@ export default function RegisterPage() {
                 </a>
               </label>
             </div>
+
+            {/* Error message */}
+            {error && (
+              <div className="text-red-500 text-sm text-center bg-red-50 dark:bg-red-900/20 p-2 rounded-lg">
+                {error}
+              </div>
+            )}
 
             {/* Submit button */}
             <button

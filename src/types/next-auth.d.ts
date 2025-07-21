@@ -6,6 +6,8 @@ declare module "next-auth" {
     user: {
       id: string
       isVerified: boolean
+      provider?: string
+      image?: string
     } & DefaultSession["user"]
   }
 
@@ -18,5 +20,7 @@ declare module "next-auth/jwt" {
   interface JWT extends DefaultJWT {
     id: string
     isVerified: boolean
+    provider?: string
+    picture?: string
   }
 } 

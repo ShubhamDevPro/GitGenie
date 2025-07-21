@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { signIn } from "next-auth/react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { signIn, signOut } from "next-auth/react";
+import { useSession } from "@/hooks/useSession";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -12,6 +13,30 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const { isAuthenticated, isLoading: sessionLoading, session } = useSession();
+
+  // Get callback URL from search params
+  const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (isAuthenticated && !sessionLoading) {
+      router.push(callbackUrl);
+    }
+  }, [isAuthenticated, sessionLoading, router, callbackUrl]);
+
+  // Show loading if session is still loading
+  if (sessionLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-purple-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,8 +52,8 @@ export default function LoginPage() {
 
       if (result?.error) {
         setError("Invalid email or password");
-      } else {
-        router.push("/dashboard");
+      } else if (result?.ok) {
+        router.push(callbackUrl);
       }
     } catch (error) {
       console.error("Login error:", error);
@@ -38,11 +63,62 @@ export default function LoginPage() {
     }
   };
 
+  const clearAuthStorage = () => {
+    // Clear NextAuth related localStorage and sessionStorage
+    if (typeof window !== "undefined") {
+      // Clear ALL localStorage and sessionStorage to ensure no cached auth state
+      localStorage.clear();
+      sessionStorage.clear();
+
+      // Clear all cookies more thoroughly
+      document.cookie.split(";").forEach((c) => {
+        const eqPos = c.indexOf("=");
+        const name = eqPos > -1 ? c.substr(0, eqPos).trim() : c.trim();
+        // Clear cookie for current path and domain
+        document.cookie =
+          name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
+        document.cookie =
+          name +
+          "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=" +
+          window.location.hostname;
+        document.cookie =
+          name +
+          "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=." +
+          window.location.hostname;
+      });
+
+      // Clear specific NextAuth cookies explicitly
+      const authCookies = [
+        "next-auth.callback-url",
+        "next-auth.csrf-token",
+        "next-auth.session-token",
+        "__Secure-next-auth.session-token",
+        "next-auth.pkce.code_verifier",
+        "__Host-next-auth.csrf-token",
+        "__Secure-next-auth.callback-url",
+      ];
+
+      authCookies.forEach((cookieName) => {
+        document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/;`;
+        document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=${window.location.hostname};`;
+        document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.${window.location.hostname};`;
+      });
+    }
+  };
+
   const handleGoogleSignIn = async () => {
     try {
-      await signIn("google", { 
-        callbackUrl: "/dashboard",
-        redirect: true 
+      // Clear any existing session and storage first
+      clearAuthStorage();
+      await signOut({ redirect: false });
+
+      // Add a small delay to ensure cleanup completes
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // Force account selection by using consent and select_account
+      await signIn("google", {
+        callbackUrl,
+        redirect: true,
       });
     } catch (error) {
       console.error("Google sign-in error:", error);
@@ -52,9 +128,16 @@ export default function LoginPage() {
 
   const handleGitHubSignIn = async () => {
     try {
-      await signIn("github", { 
-        callbackUrl: "/dashboard",
-        redirect: true 
+      // Clear any existing session and storage first
+      clearAuthStorage();
+      await signOut({ redirect: false });
+
+      // Add a small delay to ensure cleanup completes
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      await signIn("github", {
+        callbackUrl,
+        redirect: true,
       });
     } catch (error) {
       console.error("GitHub sign-in error:", error);
@@ -241,37 +324,9 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {/* Remember me and forgot password */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center">
-                <input
-                  id="remember-me"
-                  name="remember-me"
-                  type="checkbox"
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded transition-colors duration-300"
-                />
-                <label
-                  htmlFor="remember-me"
-                  className="ml-2 block text-sm text-gray-700 dark:text-gray-300"
-                >
-                  Remember me
-                </label>
-              </div>
-              <div className="text-sm">
-                <a
-                  href="#"
-                  className="font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300 transition-colors duration-300"
-                >
-                  Forgot your password?
-                </a>
-              </div>
-            </div>
-
             {/* Error message */}
             {error && (
-              <div className="text-red-500 text-sm text-center">
-                {error}
-              </div>
+              <div className="text-red-500 text-sm text-center">{error}</div>
             )}
 
             {/* Submit button */}

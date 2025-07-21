@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRequireAuth } from "../../hooks/useSession";
 import { useRepositorySearch } from "../../hooks/useRepositorySearch";
 import { useSidebar } from "../../hooks/useSidebar";
 import { popularLanguages } from "../../utils/repositoryUtils";
@@ -9,8 +10,13 @@ import { RepositoryList } from "../../components/dashboard/RepositoryList";
 import { RepositoryDetails } from "../../components/dashboard/RepositoryDetails";
 import { Pagination } from "../../components/dashboard/Pagination";
 import { Sidebar } from "../../components/sidebar";
+import { LogoutButton } from "../../components/LogoutButton";
+import { UserProfile } from "../../components/UserProfile";
 
 export default function Dashboard() {
+  // Require authentication for this page
+  const { session, isLoading: sessionLoading, user } = useRequireAuth();
+
   const {
     // State
     searchQuery,
@@ -47,6 +53,18 @@ export default function Dashboard() {
   } = useRepositorySearch();
 
   const { isSidebarOpen, toggleSidebar, closeSidebar } = useSidebar();
+
+  // Show loading spinner while session is loading
+  if (sessionLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 dark:from-gray-900 dark:via-gray-800 dark:to-slate-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 dark:from-gray-900 dark:via-gray-800 dark:to-slate-900">
@@ -105,15 +123,13 @@ export default function Dashboard() {
             </div>
 
             <div className="flex items-center space-x-2 sm:space-x-4 flex-shrink-0">
-              <div className="hidden sm:block text-sm text-gray-600 dark:text-gray-300">
-                Welcome back!
-              </div>
-              <Link
-                href="/"
-                className="px-2 py-1 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-purple-600 dark:hover:text-purple-400 transition-colors duration-300"
+              <UserProfile className="hidden sm:block" />
+              <LogoutButton
+                className="px-2 py-1 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-purple-600 dark:hover:text-purple-400 transition-colors duration-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+                redirectTo="/"
               >
                 Sign Out
-              </Link>
+              </LogoutButton>
             </div>
           </div>
         </div>

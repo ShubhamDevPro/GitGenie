@@ -91,13 +91,27 @@ export class GCPVmService {
       messages: [
         {
           role: "system",
-          content: "You are a helpful assistant that generates Linux shell commands to run Node.js/web projects. Analyze the project structure and create appropriate startup commands."
+          content: `You are an expert DevOps assistant for Ubuntu Linux servers. Generate ONLY essential bash commands to run Node.js/web projects in development mode.
+
+CRITICAL REQUIREMENTS:
+1. Target is Ubuntu Linux VM (not Windows)
+2. Use development commands (npm run dev, npm start) - NEVER npm run build
+3. Include proper environment variables for external access (HOST=0.0.0.0)
+4. Return ONLY executable bash commands without explanations
+5. Skip build/compilation steps for faster startup
+6. Ensure proper port binding for external VM access
+
+Example output format:
+npm install
+export PORT=${port}
+export HOST=0.0.0.0
+npm run dev`
         },
         {
           role: "user",
-          content: `Generate a linux shell script content to run a project at path: ${projectPath} on port ${port}. 
-          Consider common project types (React, Next.js, Express, Flask etc.) and their typical startup commands.
-          Return only the shell script content without explanations. Also don't run "npm run build" command as it is not needed for development mode.`
+          content: `Generate Linux bash commands to run a project at path: ${projectPath} on port ${port} in development mode. 
+          Consider common project types (React, Next.js, Express, Flask etc.) and their development startup commands.
+          Return only the bash commands without explanations.`
         }
       ],
       temperature: 0.3
@@ -184,10 +198,12 @@ export class GCPVmService {
       let commands: string[] = [];
       
       if (startShResult.stdout.trim() === 'exists') {
-        this.log('✅ Found existing start.sh, using npm run dev directly');
+        this.log('✅ Found existing start.sh, using direct npm run dev');
         commands = [
           'npm install',
-          `PORT=${availablePort} npm run dev`
+          `export PORT=${availablePort}`,
+          `export HOST=0.0.0.0`,
+          'npm run dev'
         ];
       } else {
         // Detect project type and handle accordingly
@@ -215,17 +231,45 @@ export class GCPVmService {
             messages: [
               {
                 role: "system",
-                content: "You are an expert DevOps assistant. Given a package.json file, generate the appropriate Linux commands to run this project on port " + availablePort + ". Return only the commands in the order they should be executed, separated by newlines. Include any necessary npm install and start commands."
+                content: `You are an expert DevOps assistant for Ubuntu Linux servers. Given a package.json file, generate ONLY the essential Linux bash commands to run this project in development mode on port ${availablePort}. 
+
+CRITICAL REQUIREMENTS:
+1. Use development commands (npm run dev, npm start) - NEVER npm run build
+2. Target is Ubuntu Linux VM (not Windows)
+3. Include proper environment variables for port binding
+4. Return ONLY executable bash commands, one per line
+5. Skip any build/compilation steps for faster startup
+6. Ensure commands bind to 0.0.0.0 (not localhost) for external access
+
+Example output format:
+npm install
+export PORT=${availablePort}
+npm run dev
+
+Do NOT include explanations, comments, or invalid commands.`
               },
               {
                 role: "user",
-                content: JSON.stringify(packageJson, null, 2)
+                content: `Package.json for Ubuntu Linux deployment:\n${JSON.stringify(packageJson, null, 2)}\n\nGenerate minimal bash commands to run this project in development mode on port ${availablePort}.`
               }
             ],
             temperature: 0.1
           });
 
-          commands = openaiResponse.choices[0].message.content?.split('\n').filter(cmd => cmd.trim() !== '') || [];
+          commands = openaiResponse.choices[0].message.content?.split('\n').filter(cmd => cmd.trim() !== '' && !cmd.startsWith('#')) || [];
+          
+          // Filter out any invalid commands that might cause syntax errors
+          commands = commands.filter(cmd => {
+            const trimmed = cmd.trim();
+            // Remove any commands that look like explanations or contain invalid syntax
+            return trimmed.length > 0 && 
+                   !trimmed.toLowerCase().includes('as a') &&
+                   !trimmed.toLowerCase().includes('please provide') &&
+                   !trimmed.includes('(') && 
+                   !trimmed.includes(')') &&
+                   (trimmed.startsWith('npm') || trimmed.startsWith('export') || trimmed.startsWith('cd') || trimmed.startsWith('python') || trimmed.startsWith('pip'));
+          });
+          
           this.log(`🤖 AI generated ${commands.length} deployment commands`);
           
         } else if (fs.existsSync(requirementsTxtPath) || fs.existsSync(appPyPath) || fs.existsSync(mainPyPath)) {
@@ -283,25 +327,92 @@ export class GCPVmService {
             messages: [
               {
                 role: "system",
-                content: `You are an expert DevOps assistant. Given a list of files in a project directory, determine the project type and generate appropriate Linux commands to run this project on port ${availablePort}. Return only the commands in the order they should be executed, separated by newlines.`
+                content: `You are an expert DevOps assistant for Ubuntu Linux servers. Given a list of project files, determine the project type and generate ONLY essential Linux bash commands to run this project in development mode on port ${availablePort}.
+
+CRITICAL REQUIREMENTS:
+1. Use development commands (npm run dev, npm start, python3 flask run) - NEVER build commands
+2. Target is Ubuntu Linux VM (not Windows)
+3. Include proper environment variables for port binding  
+4. Return ONLY executable bash commands, one per line
+5. Skip build/compilation steps for faster startup
+6. Ensure commands bind to 0.0.0.0 (not localhost) for external access
+7. For Node.js: use npm install + npm run dev
+8. For Python: use pip install + flask run with proper env vars
+
+Example outputs:
+For Node.js: npm install → export PORT=${availablePort} → npm run dev
+For Python: pip3 install -r requirements.txt → export FLASK_APP=app.py → flask run --host=0.0.0.0 --port=${availablePort}
+
+Do NOT include explanations, comments, or invalid commands.`
               },
               {
                 role: "user",
-                content: `Project files: ${files.join(', ')}\n\nGenerate deployment commands for this project.`
+                content: `Project files for Ubuntu Linux deployment: ${files.join(', ')}\n\nGenerate minimal bash commands to run this project in development mode on port ${availablePort}.`
               }
             ],
             temperature: 0.1
           });
 
-          commands = openaiResponse.choices[0].message.content?.split('\n').filter(cmd => cmd.trim() !== '') || [];
+          commands = openaiResponse.choices[0].message.content?.split('\n').filter(cmd => cmd.trim() !== '' && !cmd.startsWith('#')) || [];
+          
+          // Filter out any invalid commands that might cause syntax errors
+          commands = commands.filter(cmd => {
+            const trimmed = cmd.trim();
+            // Remove any commands that look like explanations or contain invalid syntax
+            return trimmed.length > 0 && 
+                   !trimmed.toLowerCase().includes('as a') &&
+                   !trimmed.toLowerCase().includes('please provide') &&
+                   !trimmed.includes('(') && 
+                   !trimmed.includes(')') &&
+                   (trimmed.startsWith('npm') || trimmed.startsWith('export') || trimmed.startsWith('cd') || trimmed.startsWith('python') || trimmed.startsWith('pip'));
+          });
+          
           this.log(`🤖 AI analyzed project structure and generated ${commands.length} deployment commands`);
         }
+        
+        // If no valid commands were generated, provide fallback based on file structure
+        if (commands.length === 0) {
+          this.log('⚠️ No valid commands generated by AI, using fallback logic');
+          const files = fs.readdirSync(userProjectPath);
+          
+          if (files.includes('package.json')) {
+            this.log('📦 Fallback: Detected Node.js project');
+            commands = [
+              'npm install',
+              `export PORT=${availablePort}`,
+              `export HOST=0.0.0.0`,
+              'npm run dev || npm start'
+            ];
+          } else if (files.includes('requirements.txt') || files.includes('app.py')) {
+            this.log('🐍 Fallback: Detected Python project');
+            commands = [
+              'pip3 install -r requirements.txt || pip3 install flask',
+              `export FLASK_APP=app.py`,
+              `export FLASK_ENV=development`,
+              `python3 -m flask run --host=0.0.0.0 --port=${availablePort}`
+            ];
+          } else {
+            this.log('❌ Fallback: Unknown project type, using basic commands');
+            commands = [
+              `echo "No suitable deployment strategy found for this project"`
+            ];
+          }
+        }
+      }
+
+      // Ensure we have at least some commands to execute
+      if (commands.length === 0) {
+        throw new Error('No deployment commands generated or available');
       }
 
       // Execute setup commands (all except the last one which starts the server)
       this.log('⚙️ Executing setup commands...');
       const setupCommands = commands.slice(0, -1);
       const startCommand = commands[commands.length - 1];
+      
+      if (setupCommands.length === 0) {
+        this.log('⚠️ No setup commands to execute, proceeding directly to start command');
+      }
       
       for (let i = 0; i < setupCommands.length; i++) {
         const command = setupCommands[i];

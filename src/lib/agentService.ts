@@ -130,7 +130,7 @@ export class AgentService {
       const packageJsonContent = await this.getPackageJsonContent(projectPath);
       
       const prompt = `
-Analyze this project structure and provide build/run commands for Windows:
+Analyze this project structure and provide build/run commands for Ubuntu Linux VM deployment:
 
 Project Structure:
 ${projectStructure}
@@ -151,20 +151,22 @@ Please analyze this project and provide a JSON response with the following struc
   }
 }
 
-IMPORTANT RULES:
+IMPORTANT RULES FOR UBUNTU LINUX VM:
 1. For Next.js projects, use projectType "next.js" (not fullstack) unless there are actual separate backend/frontend folders
-2. buildCommands should typically just be ["npm install"] or ["npm ci"]
-3. runCommands should be the development server commands like ["npm run dev"] for Next.js/React
+2. buildCommands should typically just be ["npm install"] or ["npm ci"] for faster setup
+3. runCommands should prioritize development servers: ["npm run dev"] for Next.js/React/Vue for faster startup
 4. Do NOT include "call" prefix in commands - just the raw npm commands
 5. Only use "fullstack" projectType if there are actual separate "frontend" and "backend" directories
 6. For single-tier applications (Next.js, Create React App, etc.), use appropriate single type
-7. Check package.json scripts to determine correct run commands
+7. Check package.json scripts to determine correct development commands
+8. Commands will run on Ubuntu Linux VM with external access requirements
 
 Consider:
 - Package.json scripts and dependencies
 - Actual directory structure (frontend/backend folders vs single app structure)
-- Framework-specific patterns
-- Common port conventions
+- Framework-specific development patterns
+- Ubuntu Linux compatibility
+- Development server commands for faster startup
 
 Respond with only the JSON object, no additional text.
 `;
@@ -174,7 +176,7 @@ Respond with only the JSON object, no additional text.
         messages: [
           {
             role: "system",
-            content: "You are an expert developer who analyzes project structures and generates build/run commands. Always respond with valid JSON only."
+            content: "You are an expert developer who analyzes project structures and generates build/run commands for Ubuntu Linux VM deployment. Prioritize development server commands for faster startup. Always respond with valid JSON only."
           },
           {
             role: "user",

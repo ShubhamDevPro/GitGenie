@@ -94,7 +94,7 @@ async function analyzeProjectWithAI(projectPath: string): Promise<ProjectAnalysi
     const packageJsonContent = await getPackageJsonContent(projectPath);
     
     const prompt = `
-Analyze this project structure and provide build/run commands:
+Analyze this project structure and provide build/run commands for Ubuntu Linux VM deployment:
 
 Project Structure:
 ${projectStructure}
@@ -106,8 +106,8 @@ Please analyze this project and provide a JSON response with the following struc
 {
   "projectType": "type (e.g., 'react', 'next.js', 'node.js', 'fullstack', 'vue', 'angular', 'express', 'fastify')",
   "framework": "specific framework or technology stack",
-  "buildCommands": ["array of build commands in order"],
-  "runCommands": ["array of run commands for development"],
+  "buildCommands": ["array of setup commands - typically just npm install"],
+  "runCommands": ["array of development server commands"],
   "dependencies": ["key dependencies identified"],
   "ports": {
     "frontend": 8000,
@@ -115,12 +115,20 @@ Please analyze this project and provide a JSON response with the following struc
   }
 }
 
+CRITICAL REQUIREMENTS FOR UBUNTU LINUX VM:
+1. Use development commands (npm run dev, npm start) - NEVER npm run build for faster startup
+2. Commands will run on Ubuntu Linux VM, not Windows
+3. Include proper environment variables for external access (HOST=0.0.0.0)
+4. buildCommands should typically be ["npm install"] or ["npm ci"] only
+5. runCommands should prioritize development servers: ["npm run dev"] for Next.js/React/Vue
+6. For backend projects, use ["npm start"] or the appropriate start script
+7. Ensure ports bind to 0.0.0.0 for external VM access
+
 Consider:
 - Package.json scripts and dependencies
-- Project structure (frontend/backend folders, src structure)
-- Framework-specific patterns
-- Common port conventions for the detected framework
-- Proper install, build, and run sequence for Windows batch files
+- Project structure (frontend/backend folders, src structure)  
+- Framework-specific development patterns
+- Ubuntu Linux compatibility
 
 Respond with only the JSON object, no additional text.
 `;
@@ -130,7 +138,7 @@ Respond with only the JSON object, no additional text.
       messages: [
         {
           role: "system",
-          content: "You are an expert developer who analyzes project structures and generates build/run commands. Always respond with valid JSON only."
+          content: "You are an expert developer who analyzes project structures and generates build/run commands for Ubuntu Linux VM deployment. Prioritize development server commands over build commands for faster startup. Always respond with valid JSON only."
         },
         {
           role: "user",

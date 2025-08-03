@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAgentService } from '@/hooks/useAgentService';
 
 interface RunProjectButtonProps {
@@ -26,17 +26,153 @@ export const RunProjectButton: React.FC<RunProjectButtonProps> = ({
   
   const [lastRunResult, setLastRunResult] = useState<any>(null);
   const [useGCPVM, setUseGCPVM] = useState(false);
+  const [showLogs, setShowLogs] = useState(false);
+  const [deploymentLogs, setDeploymentLogs] = useState<string[]>([]);
+  const [projectStatus, setProjectStatus] = useState<{ isRunning: boolean; pid?: string } | null>(null);
+  const [checkingStatus, setCheckingStatus] = useState(false);
+
+  // Check project status when component mounts and when GCP VM is toggled
+  useEffect(() => {
+    if (useGCPVM && repositoryId) {
+      checkProjectStatus();
+    } else {
+      setProjectStatus(null);
+    }
+  }, [useGCPVM, repositoryId]);
 
   const handleAnalyzeProject = async () => {
     clearError();
     await analyzeProject(projectPath, repositoryId);
   };
 
+  const checkProjectStatus = async () => {
+    if (!repositoryId || !useGCPVM) return;
+    
+    setCheckingStatus(true);
+    setDeploymentLogs(prev => [...prev, '🔍 Checking project status on VM...']);
+    
+    try {
+      const response = await fetch('/api/agent/project-status', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ repositoryId }),
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setProjectStatus({
+          isRunning: data.isRunning,
+          pid: data.pid
+        });
+        
+        // Add status result to logs
+        if (data.isRunning) {
+          setDeploymentLogs(prev => [
+            ...prev, 
+            `✅ Status check: Project is running with PID ${data.pid}`,
+            `🌐 Your application should be accessible at the provided URL`
+          ]);
+        } else {
+          setDeploymentLogs(prev => [
+            ...prev, 
+            `❌ Status check: Project is not running`,
+            `🔧 The server may have stopped. Check the VM logs for details.`
+          ]);
+        }
+      } else {
+        setDeploymentLogs(prev => [...prev, '❌ Failed to check project status']);
+      }
+    } catch (error) {
+      console.error('Error checking project status:', error);
+      setDeploymentLogs(prev => [...prev, '❌ Error checking project status']);
+    } finally {
+      setCheckingStatus(false);
+    }
+  };
+
+  const stopProject = async () => {
+    if (!repositoryId || !useGCPVM) return;
+    
+    try {
+      const response = await fetch('/api/agent/project-status', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ repositoryId }),
+      });
+      
+      if (response.ok) {
+        setProjectStatus({ isRunning: false });
+        setDeploymentLogs(prev => [...prev, '🛑 Project stopped successfully']);
+      }
+    } catch (error) {
+      console.error('Error stopping project:', error);
+    }
+  };
+
+  const getProjectLogs = async () => {
+    if (!repositoryId || !useGCPVM) return;
+    
+    try {
+      setDeploymentLogs(prev => [...prev, '📄 Fetching server logs from VM...']);
+      
+      const response = await fetch('/api/agent/project-logs', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ repositoryId }),
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setDeploymentLogs(prev => [
+          ...prev, 
+          '📄 Server logs retrieved:',
+          '--- VM Server Logs ---',
+          data.logs,
+          '--- End of VM Server Logs ---'
+        ]);
+      } else {
+        setDeploymentLogs(prev => [...prev, '❌ Failed to get server logs']);
+      }
+    } catch (error) {
+      console.error('Error getting project logs:', error);
+      setDeploymentLogs(prev => [...prev, '❌ Error fetching server logs']);
+    }
+  };
+
   const handleRunProject = async () => {
     clearError();
+    
+    // Show deployment logs immediately when starting
+    setShowLogs(true);
+    setDeploymentLogs(['🚀 Starting deployment process...']);
+    
     const result = await runProject(projectPath, repositoryId, true, useGCPVM);
     if (result) {
       setLastRunResult(result);
+      
+      // Add final success message to deployment logs
+      if (result.success && useGCPVM) {
+        const vmResult = result as any; // Type assertion since we know it's a VM result when useGCPVM is true
+        setDeploymentLogs(prev => [
+          ...prev,
+          '✅ Deployment completed successfully!',
+          `🌐 Your project is now running at: ${vmResult.projectUrl || 'VM'}`,
+          '📌 The server is running in background and will persist even if you navigate away or close this tab.',
+          '🔄 The VM connection has been properly configured to maintain your running application.',
+          '⏳ Checking project status in 5 seconds...'
+        ]);
+        
+        // Check project status after a delay to ensure it's fully started
+        setTimeout(() => {
+          checkProjectStatus();
+        }, 5000);
+      }
     }
   };
 
@@ -71,6 +207,100 @@ export const RunProjectButton: React.FC<RunProjectButtonProps> = ({
         {useGCPVM && (
           <div className="text-xs text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/20 px-2 py-1 rounded">
             ☁️ Cloud Execution
+          </div>
+        )}
+      </div>
+
+      {/* Project Status Indicator (for GCP VM) */}
+      {useGCPVM && (
+        <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-medium text-gray-800 dark:text-gray-200">
+              🖥️ VM Project Status
+            </h4>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={checkProjectStatus}
+                disabled={checkingStatus}
+                className="text-xs text-blue-600 dark:text-blue-400 hover:underline px-2 py-1 bg-blue-100 dark:bg-blue-900/20 rounded"
+              >
+                {checkingStatus ? (
+                  <>
+                    <span className="inline-block w-3 h-3 border border-blue-600 border-t-transparent rounded-full animate-spin mr-1"></span>
+                    Checking...
+                  </>
+                ) : (
+                  '🔄 Refresh Status'
+                )}
+              </button>
+              <button
+                onClick={getProjectLogs}
+                className="text-xs text-green-600 dark:text-green-400 hover:underline px-2 py-1 bg-green-100 dark:bg-green-900/20 rounded"
+              >
+                📄 Get Server Logs
+              </button>
+            </div>
+          </div>
+          
+          {projectStatus ? (
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <div className={`w-3 h-3 rounded-full ${
+                  projectStatus.isRunning ? 'bg-green-500 animate-pulse' : 'bg-red-500'
+                }`}></div>
+                <span className="text-sm">
+                  {projectStatus.isRunning ? (
+                    <span className="text-green-700 dark:text-green-300">
+                      ✅ Running {projectStatus.pid && `(PID: ${projectStatus.pid})`}
+                    </span>
+                  ) : (
+                    <span className="text-red-700 dark:text-red-300">
+                      ❌ Not Running
+                    </span>
+                  )}
+                </span>
+              </div>
+              
+              {projectStatus.isRunning && (
+                <button
+                  onClick={stopProject}
+                  className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200 px-2 py-1 bg-red-100 dark:bg-red-900/20 rounded hover:bg-red-200 dark:hover:bg-red-900/40 transition-colors"
+                >
+                  🛑 Stop Project
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="text-sm text-gray-600 dark:text-gray-400">
+              📡 Status unknown - click refresh to check
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Show Logs Toggle */}
+      <div className="flex items-center space-x-2 p-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
+        <label className="flex items-center cursor-pointer">
+          <input
+            type="checkbox"
+            checked={showLogs}
+            onChange={(e) => setShowLogs(e.target.checked)}
+            className="sr-only"
+          />
+          <div className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+            showLogs ? 'bg-green-600' : 'bg-gray-300 dark:bg-gray-600'
+          }`}>
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+              showLogs ? 'translate-x-6' : 'translate-x-1'
+            }`} />
+          </div>
+          <span className="ml-3 text-sm font-medium text-gray-700 dark:text-gray-300">
+            Show Deployment Logs
+          </span>
+        </label>
+        {showLogs && (
+          <div className="text-xs text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/20 px-2 py-1 rounded">
+            📋 Live Logs
           </div>
         )}
       </div>
@@ -137,6 +367,115 @@ export const RunProjectButton: React.FC<RunProjectButtonProps> = ({
         )}
       </div>
 
+      {/* Real-time Logs Display */}
+      {showLogs && (isRunningProject || deploymentLogs.length > 0 || lastRunResult?.logs) && (
+        <div className="p-4 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200 flex items-center">
+              <span className="mr-2">📋</span>
+              Deployment Logs
+              {isRunningProject && (
+                <div className="ml-2 w-3 h-3 border-2 border-green-500 border-t-transparent rounded-full animate-spin"></div>
+              )}
+            </h4>
+            <div className="flex items-center space-x-2">
+              {(lastRunResult?.logs || deploymentLogs.length > 0) && (
+                <button
+                  onClick={() => {
+                    const logs = lastRunResult?.logs || deploymentLogs.join('\n');
+                    navigator.clipboard.writeText(logs);
+                  }}
+                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline px-2 py-1 bg-blue-100 dark:bg-blue-900/20 rounded"
+                  title="Copy all logs to clipboard"
+                >
+                  📋 Copy Logs
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  setDeploymentLogs([]);
+                  if (!lastRunResult?.logs) setShowLogs(false);
+                }}
+                className="text-xs text-gray-600 dark:text-gray-400 hover:underline px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded"
+                title="Clear logs"
+              >
+                🗑️ Clear
+              </button>
+            </div>
+          </div>
+          
+          <div className="bg-black text-green-400 p-3 rounded-lg text-xs font-mono max-h-80 overflow-y-auto border-2 border-gray-600">
+            {isRunningProject && (
+              <div className="text-yellow-400 mb-2">
+                🚀 Starting deployment process...
+                {useGCPVM && <div>☁️ Deploying to GCP VM...</div>}
+              </div>
+            )}
+            
+            {deploymentLogs.length > 0 && (
+              <div className="mb-2">
+                {deploymentLogs.map((log, index) => (
+                  <div key={index} className="mb-1">
+                    <span className="text-gray-500">[{new Date().toLocaleTimeString()}]</span>
+                    <span className="ml-2">{log}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            {lastRunResult?.logs && (
+              <div>
+                <div className="text-cyan-400 mb-2">📋 Complete Deployment Log:</div>
+                <pre className="whitespace-pre-wrap leading-relaxed text-green-300">
+                  {lastRunResult.logs}
+                </pre>
+              </div>
+            )}
+            
+            {!isRunningProject && !lastRunResult?.logs && deploymentLogs.length === 0 && (
+              <div className="text-gray-500 italic">
+                💡 Logs will appear here during deployment...
+              </div>
+            )}
+          </div>
+          
+          {lastRunResult?.commands && showLogs && (
+            <div className="mt-3 pt-3 border-t border-gray-300 dark:border-gray-600">
+              <h5 className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
+                🤖 AI Generated Commands:
+              </h5>
+              <div className="bg-gray-800 text-blue-300 p-2 rounded text-xs font-mono">
+                {lastRunResult.commands.map((cmd: string, index: number) => (
+                  <div key={index} className="mb-1">
+                    <span className="text-gray-500">{index + 1}.</span>
+                    <span className="ml-2">{cmd}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* Debug Information */}
+          {showLogs && (lastRunResult || useGCPVM) && (
+            <div className="mt-3 pt-3 border-t border-gray-300 dark:border-gray-600">
+              <h5 className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
+                🔍 Debug Information:
+              </h5>
+              <div className="bg-gray-50 dark:bg-gray-900 p-2 rounded text-xs font-mono text-gray-600 dark:text-gray-400">
+                <div>Repository ID: {repositoryId}</div>
+                <div>Repository Name: {repositoryName}</div>
+                <div>Deployment Mode: {useGCPVM ? 'GCP VM' : 'Local'}</div>
+                {lastRunResult?.vmIP && <div>VM IP: {lastRunResult.vmIP}</div>}
+                {lastRunResult?.port && <div>Port: {lastRunResult.port}</div>}
+                {lastRunResult?.projectUrl && <div>Project URL: {lastRunResult.projectUrl}</div>}
+                <div>Timestamp: {new Date().toLocaleString()}</div>
+                {projectPath && <div>Project Path: {projectPath}</div>}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Success Message */}
       {lastRunResult?.success && (
         <div className="p-3 bg-blue-100 dark:bg-blue-900/20 border border-blue-300 dark:border-blue-700 rounded-lg">
@@ -171,13 +510,27 @@ export const RunProjectButton: React.FC<RunProjectButtonProps> = ({
           </div>
           
           {/* VM Logs Display */}
-          {lastRunResult.logs && (
+          {lastRunResult.logs && showLogs && (
             <div className="mt-3 pt-3 border-t border-blue-300 dark:border-blue-700">
-              <h5 className="text-xs font-medium text-blue-800 dark:text-blue-200 mb-2">
-                📋 VM Deployment Logs:
-              </h5>
-              <div className="bg-gray-900 text-green-400 p-2 rounded text-xs font-mono max-h-40 overflow-y-auto">
-                <pre className="whitespace-pre-wrap">{lastRunResult.logs}</pre>
+              <div className="flex items-center justify-between mb-2">
+                <h5 className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                  📋 VM Deployment Logs
+                </h5>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(lastRunResult.logs);
+                  }}
+                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                  title="Copy logs to clipboard"
+                >
+                  📋 Copy
+                </button>
+              </div>
+              <div className="bg-gray-900 text-green-400 p-3 rounded-lg text-xs font-mono max-h-60 overflow-y-auto border">
+                <pre className="whitespace-pre-wrap leading-relaxed">{lastRunResult.logs}</pre>
+              </div>
+              <div className="mt-2 text-xs text-blue-600 dark:text-blue-400">
+                💡 These are the real-time logs from your VM deployment process
               </div>
             </div>
           )}
@@ -213,17 +566,46 @@ export const RunProjectButton: React.FC<RunProjectButtonProps> = ({
 
       {/* Error Display */}
       {error && (
-        <div className="p-3 bg-red-100 dark:bg-red-900/20 border border-red-300 dark:border-red-700 rounded-lg">
-          <h4 className="text-sm font-medium text-red-800 dark:text-red-200 mb-1">
-            ❌ Error
-          </h4>
-          <p className="text-xs text-red-700 dark:text-red-300">{error}</p>
-          <button
-            onClick={clearError}
-            className="mt-2 text-xs text-red-600 dark:text-red-400 hover:underline"
-          >
-            Dismiss
-          </button>
+        <div className="p-4 bg-red-100 dark:bg-red-900/20 border border-red-300 dark:border-red-700 rounded-lg">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-medium text-red-800 dark:text-red-200 flex items-center">
+              ❌ Deployment Error
+            </h4>
+            <button
+              onClick={() => navigator.clipboard.writeText(error)}
+              className="text-xs text-red-600 dark:text-red-400 hover:underline px-2 py-1 bg-red-200 dark:bg-red-800 rounded"
+              title="Copy error to clipboard"
+            >
+              📋 Copy Error
+            </button>
+          </div>
+          
+          <div className="bg-red-50 dark:bg-red-900/30 p-3 rounded border">
+            <p className="text-sm text-red-700 dark:text-red-300 font-mono whitespace-pre-wrap">{error}</p>
+          </div>
+          
+          <div className="mt-3 text-xs text-red-600 dark:text-red-400">
+            💡 Check the logs above for more details about what went wrong during deployment
+          </div>
+          
+          <div className="flex items-center space-x-2 mt-3">
+            <button
+              onClick={clearError}
+              className="text-xs text-red-600 dark:text-red-400 hover:underline px-3 py-1 bg-red-200 dark:bg-red-800 rounded"
+            >
+              Dismiss Error
+            </button>
+            <button
+              onClick={() => {
+                clearError();
+                setLastRunResult(null);
+                setDeploymentLogs([]);
+              }}
+              className="text-xs text-gray-600 dark:text-gray-400 hover:underline px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded"
+            >
+              Reset All
+            </button>
+          </div>
         </div>
       )}
     </div>

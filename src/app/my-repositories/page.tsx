@@ -48,6 +48,7 @@ export default function MyRepositoriesPage() {
     const [userData, setUserData] = useState<UserData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [lastFetchTime, setLastFetchTime] = useState<number | null>(null);
 
     useEffect(() => {
         if (status === 'loading') return;
@@ -57,8 +58,18 @@ export default function MyRepositoriesPage() {
             return;
         }
 
-        fetchUserRepositories();
-    }, [session, status, router]);
+        // Only fetch if we don't have data yet or if data is older than 5 minutes
+        const shouldFetch = !userData || 
+            !lastFetchTime || 
+            (Date.now() - lastFetchTime > 5 * 60 * 1000);
+
+        if (shouldFetch) {
+            fetchUserRepositories();
+        } else {
+            // If we have cached data, just stop loading
+            setLoading(false);
+        }
+    }, [session, status, router, userData, lastFetchTime]);
 
     const fetchUserRepositories = async () => {
         try {
@@ -71,6 +82,8 @@ export default function MyRepositoriesPage() {
 
             const data = await response.json();
             setUserData(data);
+            setLastFetchTime(Date.now());
+            setError(null); // Clear any previous errors
         } catch (error) {
             console.error('Error fetching user repositories:', error);
             setError(error instanceof Error ? error.message : 'Failed to load repositories');
@@ -93,7 +106,8 @@ export default function MyRepositoriesPage() {
                 throw new Error('Failed to delete repository');
             }
 
-            // Refresh the data
+            // Force refresh the data after deletion
+            setLastFetchTime(null); // This will force a fresh fetch
             await fetchUserRepositories();
         } catch (error) {
             console.error('Error deleting repository:', error);

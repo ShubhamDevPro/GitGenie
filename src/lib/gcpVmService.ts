@@ -96,8 +96,8 @@ export class GCPVmService {
         {
           role: "user",
           content: `Generate a linux shell script content to run a project at path: ${projectPath} on port ${port}. 
-          Consider common project types (React, Next.js, Express, etc.) and their typical startup commands.
-          Return only the shell script content without explanations.`
+          Consider common project types (React, Next.js, Express, Flask etc.) and their typical startup commands.
+          Return only the shell script content without explanations. Also don't run "npm run build" command as it is not needed for development mode.`
         }
       ],
       temperature: 0.3
@@ -156,7 +156,7 @@ export class GCPVmService {
       this.log('✅ Connected to VM successfully');
 
       // Create project directory on VM
-      const vmProjectPath = `/home/${process.env.GCP_VM_USERNAME}/${repoName}`;
+      const vmProjectPath = `/home/${process.env.GCP_VM_USERNAME}/projects/${repoName}`;
       this.log(`📁 Creating project directory: ${vmProjectPath}`);
       await ssh.execCommand(`mkdir -p ${vmProjectPath}`);
 
@@ -190,37 +190,122 @@ export class GCPVmService {
           `PORT=${availablePort} npm run dev`
         ];
       } else {
-        // Read package.json to understand project type
+        // Detect project type and handle accordingly
         this.log('📖 Analyzing project configuration...');
+        
+        // Check for different project types
         const packageJsonPath = path.join(userProjectPath, 'package.json');
-        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+        const requirementsTxtPath = path.join(userProjectPath, 'requirements.txt');
+        const appPyPath = path.join(userProjectPath, 'app.py');
+        const mainPyPath = path.join(userProjectPath, 'main.py');
+        
+        let projectType = 'unknown';
+        
+        if (fs.existsSync(packageJsonPath)) {
+          // Node.js project
+          projectType = 'nodejs';
+          this.log('🟢 Detected Node.js project (package.json found)');
+          
+          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
 
-        // Use OpenAI to analyze the project and generate appropriate commands
-        this.log('🤖 Using AI to generate deployment commands...');
-        const openaiResponse = await this.openai.chat.completions.create({
-          model: "gpt-4",
-          messages: [
-            {
-              role: "system",
-              content: "You are an expert DevOps assistant. Given a package.json file, generate the appropriate Linux commands to run this project on port " + availablePort + ". Return only the commands in the order they should be executed, separated by newlines. Include any necessary npm install and start commands."
-            },
-            {
-              role: "user",
-              content: JSON.stringify(packageJson, null, 2)
-            }
-          ],
-          temperature: 0.1
-        });
+          // Use OpenAI to analyze the project and generate appropriate commands
+          this.log('🤖 Using AI to generate deployment commands...');
+          const openaiResponse = await this.openai.chat.completions.create({
+            model: "gpt-4",
+            messages: [
+              {
+                role: "system",
+                content: "You are an expert DevOps assistant. Given a package.json file, generate the appropriate Linux commands to run this project on port " + availablePort + ". Return only the commands in the order they should be executed, separated by newlines. Include any necessary npm install and start commands."
+              },
+              {
+                role: "user",
+                content: JSON.stringify(packageJson, null, 2)
+              }
+            ],
+            temperature: 0.1
+          });
 
-        commands = openaiResponse.choices[0].message.content?.split('\n').filter(cmd => cmd.trim() !== '') || [];
-        this.log(`🤖 AI generated ${commands.length} deployment commands`);
+          commands = openaiResponse.choices[0].message.content?.split('\n').filter(cmd => cmd.trim() !== '') || [];
+          this.log(`🤖 AI generated ${commands.length} deployment commands`);
+          
+        } else if (fs.existsSync(requirementsTxtPath) || fs.existsSync(appPyPath) || fs.existsSync(mainPyPath)) {
+          // Python/Flask project
+          projectType = 'python';
+          this.log('🐍 Detected Python/Flask project');
+          
+          // Determine the main file
+          let mainFile = 'app.py';
+          if (fs.existsSync(appPyPath)) {
+            mainFile = 'app.py';
+          } else if (fs.existsSync(mainPyPath)) {
+            mainFile = 'main.py';
+          }
+          
+          this.log(`🎯 Using main file: ${mainFile}`);
+          
+          // Generate Python/Flask deployment commands
+          commands = [
+            'python3 -m pip install --user -r requirements.txt',
+            `export FLASK_APP=${mainFile}`,
+            `export FLASK_ENV=development`,
+            `export FLASK_RUN_PORT=${availablePort}`,
+            `export FLASK_RUN_HOST=0.0.0.0`,
+            `export PYTHONUNBUFFERED=1`,
+            `python3 -m flask run --host=0.0.0.0 --port=${availablePort}`
+          ];
+          
+          // If no requirements.txt, try basic Flask command
+          if (!fs.existsSync(requirementsTxtPath)) {
+            this.log('⚠️ No requirements.txt found, using basic Flask setup');
+            commands = [
+              'python3 -m pip install --user flask',
+              `export FLASK_APP=${mainFile}`,
+              `export FLASK_ENV=development`,
+              `export FLASK_RUN_PORT=${availablePort}`,
+              `export FLASK_RUN_HOST=0.0.0.0`,
+              `export PYTHONUNBUFFERED=1`,
+              `python3 -m flask run --host=0.0.0.0 --port=${availablePort}`
+            ];
+          }
+          
+          this.log(`🐍 Generated ${commands.length} Python/Flask deployment commands`);
+          
+        } else {
+          // Unknown project type - try to use OpenAI with project structure
+          projectType = 'unknown';
+          this.log('❓ Unknown project type, using AI to analyze project structure');
+          
+          // Get list of files in the project
+          const files = fs.readdirSync(userProjectPath).slice(0, 20); // Limit to first 20 files
+          
+          const openaiResponse = await this.openai.chat.completions.create({
+            model: "gpt-4",
+            messages: [
+              {
+                role: "system",
+                content: `You are an expert DevOps assistant. Given a list of files in a project directory, determine the project type and generate appropriate Linux commands to run this project on port ${availablePort}. Return only the commands in the order they should be executed, separated by newlines.`
+              },
+              {
+                role: "user",
+                content: `Project files: ${files.join(', ')}\n\nGenerate deployment commands for this project.`
+              }
+            ],
+            temperature: 0.1
+          });
+
+          commands = openaiResponse.choices[0].message.content?.split('\n').filter(cmd => cmd.trim() !== '') || [];
+          this.log(`🤖 AI analyzed project structure and generated ${commands.length} deployment commands`);
+        }
       }
 
-      // Execute each command on the VM
-      this.log('⚙️ Executing deployment commands...');
-      for (let i = 0; i < commands.length; i++) {
-        const command = commands[i];
-        this.log(`📋 [${i + 1}/${commands.length}] Running: ${command}`);
+      // Execute setup commands (all except the last one which starts the server)
+      this.log('⚙️ Executing setup commands...');
+      const setupCommands = commands.slice(0, -1);
+      const startCommand = commands[commands.length - 1];
+      
+      for (let i = 0; i < setupCommands.length; i++) {
+        const command = setupCommands[i];
+        this.log(`📋 [${i + 1}/${setupCommands.length}] Running: ${command}`);
         
         const result = await ssh.execCommand(command, { cwd: vmProjectPath });
         
@@ -232,12 +317,75 @@ export class GCPVmService {
           this.log(`📄 Output: ${result.stdout.substring(0, 200)}${result.stdout.length > 200 ? '...' : ''}`);
         }
       }
+      
+      // Start the server in the background (detached)
+      if (startCommand) {
+        this.log(`🚀 Starting server in background: ${startCommand}`);
+        
+        // Create a more robust startup script that ensures the server stays running
+        const startupScript = `#!/bin/bash
+cd ${vmProjectPath}
+export PORT=${availablePort}
+
+# Kill any existing server on this port
+if [ -f server.pid ]; then
+    OLD_PID=$(cat server.pid)
+    if ps -p $OLD_PID > /dev/null 2>&1; then
+        kill $OLD_PID 2>/dev/null
+        sleep 2
+    fi
+fi
+
+# Start the new server in background with proper logging
+nohup ${startCommand} > server.log 2>&1 &
+NEW_PID=$!
+echo $NEW_PID > server.pid
+
+# Wait a moment and verify the process is still running
+sleep 3
+if ps -p $NEW_PID > /dev/null 2>&1; then
+    echo "Server started successfully with PID: $NEW_PID"
+    echo "Server is running and listening on port ${availablePort}"
+else
+    echo "Server failed to start. Check server.log for details."
+    cat server.log 2>/dev/null || echo "No log file found"
+    exit 1
+fi
+`;
+
+        // Write the startup script to VM
+        await ssh.execCommand(`cat > ${vmProjectPath}/start_server.sh << 'EOF'
+${startupScript}
+EOF`);
+        
+        // Make script executable and run it
+        await ssh.execCommand(`chmod +x ${vmProjectPath}/start_server.sh`);
+        const startResult = await ssh.execCommand(`${vmProjectPath}/start_server.sh`, { cwd: vmProjectPath });
+        
+        this.log(`🎯 Server startup result: ${startResult.stdout}`);
+        if (startResult.stderr) {
+          this.log(`⚠️ Server startup stderr: ${startResult.stderr}`);
+        }
+        
+        // Additional verification - check if the process is actually running
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+        const verifyResult = await ssh.execCommand(`ps aux | grep "${availablePort}" | grep -v grep`);
+        if (verifyResult.stdout) {
+          this.log(`✅ Server verification: Process found running on port ${availablePort}`);
+        } else {
+          this.log(`⚠️ Server verification: No process found on port ${availablePort}`);
+          // Try to get server logs for debugging
+          const logResult = await ssh.execCommand(`cat ${vmProjectPath}/server.log 2>/dev/null || echo "No log file"`, { cwd: vmProjectPath });
+          this.log(`📄 Server logs: ${logResult.stdout}`);
+        }
+      }
 
       const vmIP = await this.getVmExternalIP();
       const projectUrl = `http://${vmIP}:${availablePort}`;
       
       this.log('🎉 Project deployment completed successfully!');
       this.log(`🌐 Project URL: ${projectUrl}`);
+      this.log('✅ Server is running in background and will persist across sessions');
 
       return {
         success: true,
@@ -252,8 +400,10 @@ export class GCPVmService {
       this.log(`❌ Deployment failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       throw error;
     } finally {
+      // Only disconnect after deployment is complete
+      // The server will continue running in background
       ssh.dispose();
-      this.log('🔌 Disconnected from VM');
+      this.log('🔌 Disconnected from VM (server continues running)');
     }
   }
 
@@ -276,5 +426,132 @@ ${bashContent}`;
     // For now, return the configured external IP
     // In production, you'd want to fetch this dynamically from GCP
     return this.vmExternalIP;
+  }
+
+  async checkProjectStatus(repoName: string): Promise<{ isRunning: boolean; pid?: string; port?: number }> {
+    const ssh = new NodeSSH();
+    
+    try {
+      this.log(`🔍 Checking status of project: ${repoName}`);
+      await ssh.connect({
+        host: await this.getVmExternalIP(),
+        username: process.env.GCP_VM_USERNAME!,
+        privateKeyPath: process.env.GCP_VM_SSH_KEY_PATH!
+      });
+
+      const vmProjectPath = `/home/${process.env.GCP_VM_USERNAME}/projects/${repoName}`;
+      
+      // Check if PID file exists and if process is running
+      const pidResult = await ssh.execCommand(`if [ -f ${vmProjectPath}/server.pid ]; then cat ${vmProjectPath}/server.pid; else echo "no-pid"; fi`);
+      
+      if (pidResult.stdout.trim() === 'no-pid') {
+        this.log(`📄 No PID file found for ${repoName}`);
+        return { isRunning: false };
+      }
+
+      const pid = pidResult.stdout.trim();
+      
+      // Check if the process is actually running
+      const processCheck = await ssh.execCommand(`ps -p ${pid} > /dev/null 2>&1 && echo "running" || echo "stopped"`);
+      
+      if (processCheck.stdout.trim() === 'running') {
+        // Double-check by looking for the actual process with port info
+        const portCheck = await ssh.execCommand(`netstat -tlnp 2>/dev/null | grep ":.*:.*LISTEN.*${pid}/" || ps aux | grep ${pid} | grep -v grep`);
+        
+        if (portCheck.stdout) {
+          this.log(`✅ Project ${repoName} is running with PID: ${pid}`);
+          
+          // Try to extract port from netstat output
+          const portMatch = portCheck.stdout.match(/:(\d+)\s.*LISTEN/);
+          const port = portMatch ? parseInt(portMatch[1]) : undefined;
+          
+          return { isRunning: true, pid, port };
+        } else {
+          this.log(`❌ Process ${pid} exists but may not be listening on expected ports`);
+          return { isRunning: false, pid };
+        }
+      } else {
+        this.log(`❌ Project ${repoName} process not found (PID: ${pid})`);
+        
+        // Clean up stale PID file
+        await ssh.execCommand(`rm -f ${vmProjectPath}/server.pid`);
+        
+        return { isRunning: false, pid };
+      }
+      
+    } catch (error) {
+      this.log(`❌ Error checking project status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return { isRunning: false };
+    } finally {
+      ssh.dispose();
+    }
+  }
+
+  async getProjectLogs(repoName: string): Promise<string> {
+    const ssh = new NodeSSH();
+    
+    try {
+      this.log(`📄 Getting logs for project: ${repoName}`);
+      await ssh.connect({
+        host: await this.getVmExternalIP(),
+        username: process.env.GCP_VM_USERNAME!,
+        privateKeyPath: process.env.GCP_VM_SSH_KEY_PATH!
+      });
+
+      const vmProjectPath = `/home/${process.env.GCP_VM_USERNAME}/projects/${repoName}`;
+      
+      // Get server logs
+      const logResult = await ssh.execCommand(`cat ${vmProjectPath}/server.log 2>/dev/null || echo "No server log file found"`);
+      
+      return logResult.stdout || 'No logs available';
+      
+    } catch (error) {
+      this.log(`❌ Error getting project logs: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return 'Error retrieving logs';
+    } finally {
+      ssh.dispose();
+    }
+  }
+
+  async stopProject(repoName: string): Promise<boolean> {
+    const ssh = new NodeSSH();
+    
+    try {
+      this.log(`🛑 Stopping project: ${repoName}`);
+      await ssh.connect({
+        host: await this.getVmExternalIP(),
+        username: process.env.GCP_VM_USERNAME!,
+        privateKeyPath: process.env.GCP_VM_SSH_KEY_PATH!
+      });
+
+      const vmProjectPath = `/home/${process.env.GCP_VM_USERNAME}/projects/${repoName}`;
+      
+      // Read PID file and kill the process
+      const pidResult = await ssh.execCommand(`if [ -f ${vmProjectPath}/server.pid ]; then cat ${vmProjectPath}/server.pid; else echo "no-pid"; fi`);
+      
+      if (pidResult.stdout.trim() === 'no-pid') {
+        this.log(`📄 No PID file found for ${repoName}, nothing to stop`);
+        return true;
+      }
+
+      const pid = pidResult.stdout.trim();
+      const killResult = await ssh.execCommand(`kill ${pid} && echo "killed" || echo "failed"`);
+      
+      if (killResult.stdout.trim() === 'killed') {
+        // Clean up PID file
+        await ssh.execCommand(`rm -f ${vmProjectPath}/server.pid`);
+        this.log(`✅ Successfully stopped project ${repoName} (PID: ${pid})`);
+        return true;
+      } else {
+        this.log(`❌ Failed to stop project ${repoName} (PID: ${pid})`);
+        return false;
+      }
+      
+    } catch (error) {
+      this.log(`❌ Error stopping project: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return false;
+    } finally {
+      ssh.dispose();
+    }
   }
 }

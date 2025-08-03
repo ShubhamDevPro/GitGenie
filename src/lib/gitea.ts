@@ -166,7 +166,7 @@ class GiteaService {
             method: 'POST',
             body: JSON.stringify({
                 ...repoData,
-                private: true, // Make all cloned repos private by default
+                private: false, // Make all cloned repos public
                 auto_init: false, // Don't auto-initialize
             }),
         }, token);
@@ -214,7 +214,7 @@ class GiteaService {
                 repo_owner: username,
                 service: 'git', // Change from 'github' to 'git' for generic git repos
                 mirror: false, // We want a full migration, not a mirror
-                private: true,
+                private: false, // Make repositories public
                 description: description || `Cloned from ${githubUrl}`,
                 wiki: false, // Disable wiki migration to simplify
                 milestones: false, // Disable milestone migration
@@ -276,7 +276,7 @@ class GiteaService {
             body: JSON.stringify({
                 name: repoName,
                 description: description || `Cloned from ${githubUrl}`,
-                private: true,
+                private: false, // Make repositories public
                 clone_addr: githubUrl, // This will clone the content
                 mirror: false, // We want a full clone, not a mirror
                 auto_init: false,

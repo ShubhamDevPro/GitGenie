@@ -3,6 +3,8 @@
 import { useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { RunProjectButton } from '@/components/dashboard/RunProjectButton';
+import { OpenProjectButton } from '@/components/dashboard/OpenProjectButton';
 
 interface ClonedRepository {
     id: string;
@@ -228,6 +230,40 @@ export default function MyRepositoriesPage() {
                                                                 </button>
                                                             </div>
                                                         )}
+                                                    </div>
+                                                </div>
+                                                
+                                                {/* Project Actions Section */}
+                                                <div className="mt-4 p-3 bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200 rounded-lg">
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <h4 className="text-sm font-semibold text-orange-800">
+                                                            🚀 Project Actions
+                                                        </h4>
+                                                        <span className="text-xs text-orange-600">
+                                                            AI Agent Integration
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-xs text-orange-700 mb-3">
+                                                        Open your project in VS Code or launch it with automatic environment detection
+                                                    </p>
+                                                    
+                                                    {/* Action Buttons */}
+                                                    <div className="flex flex-col sm:flex-row gap-2">
+                                                        <div className="flex-1">
+                                                            <OpenProjectButton
+                                                                repositoryId={repo.id}
+                                                                repositoryName={repo.giteaRepoName}
+                                                                githubUrl={repo.githubUrl}
+                                                                className="text-xs w-full"
+                                                            />
+                                                        </div>
+                                                        <div className="flex-1">
+                                                            <RunProjectButton
+                                                                repositoryId={repo.id}
+                                                                repositoryName={repo.giteaRepoName}
+                                                                className="text-xs w-full"
+                                                            />
+                                                        </div>
                                                     </div>
                                                 </div>
                                                 

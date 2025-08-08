@@ -1,0 +1,183 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Custom animations for login page */
+@keyframes blob {
+  0% {
+    transform: translate(0px, 0px) scale(1);
+  }
+  33% {
+    transform: translate(30px, -50px) scale(1.1);
+  }
+  66% {
+    transform: translate(-20px, 20px) scale(0.9);
+  }
+  100% {
+    transform: translate(0px, 0px) scale(1);
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+}
+
+@keyframes fade-in-up {
+  0% {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-blob {
+  animation: blob 7s infinite;
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.8s ease-out forwards;
+}
+
+.animation-delay-2000 {
+  animation-delay: 2s;
+}
+
+.animation-delay-4000 {
+  animation-delay: 4s;
+}
+
+.animation-delay-6000 {
+  animation-delay: 6s;
+}
+
+/* Custom README markdown styles */
+.readme-content {
+  line-height: 1.6;
+}
+
+.readme-content h1 {
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.readme-content h2 {
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.readme-content pre {
+  background-color: #f8f9fa;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+.readme-content code {
+  background-color: #f1f5f9;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+}
+
+.readme-content pre code {
+  background-color: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: 1em;
+}
+
+.readme-content blockquote {
+  border-left: 4px solid #e2e8f0;
+  margin-left: 0;
+  padding-left: 1rem;
+  color: #6b7280;
+}
+
+.readme-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0;
+}
+
+.readme-content th,
+.readme-content td {
+  border: 1px solid #e2e8f0;
+  padding: 0.5rem;
+  text-align: left;
+}
+
+.readme-content th {
+  background-color: #f8f9fa;
+  font-weight: 600;
+}
+
+/* Dark mode styles */
+@media (prefers-color-scheme: dark) {
+  .readme-content pre {
+    background-color: #1f2937;
+    border-color: #374151;
+  }
+
+  .readme-content code {
+    background-color: #374151;
+  }
+
+  .readme-content h1,
+  .readme-content h2 {
+    border-color: #374151;
+  }
+
+  .readme-content blockquote {
+    border-color: #374151;
+    color: #9ca3af;
+  }
+
+  .readme-content th,
+  .readme-content td {
+    border-color: #374151;
+  }
+
+  .readme-content th {
+    background-color: #1f2937;
+  }
+}

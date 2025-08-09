@@ -32,14 +32,14 @@ export default function ProjectRunnerPage() {
   >([
     {
       id: "1",
-      text: `Welcome! I'm here to help you with your project . You can ask me questions about your running application, request debugging help, or get suggestions for improvements.`,
+      text: `Welcome! I'm your AI assistant for project development. Currently, the AI agent functionality is being developed and will be available in a future update. You can still interact with the chat interface.`,
       sender: "bot",
       timestamp: new Date(),
     },
   ]);
   const [newMessage, setNewMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [messageCount, setMessageCount] = useState(0);
+
   const [chatContainerRef, setChatContainerRef] = useState<HTMLDivElement | null>(null);
 
   // Auto-scroll to bottom when new messages are added
@@ -151,186 +151,18 @@ export default function ProjectRunnerPage() {
     setIsLoading(true);
 
     try {
-      // Demo functionality for showcasing AI capabilities
+      // Simulate AI processing delay
       setTimeout(() => {
-        let botResponse = "";
-        let followUpAction = null;
-        
-        if (messageCount === 0) {
-          // First user message - show tech stack breakdown
-          botResponse = `Here's the tech stack breakdown:
-
-**Backend Technologies**
-• **Python**
-• **PyGame** - Used for the original desktop game implementation in main.py
-  - Game window creation and management
-  - Event handling (keyboard inputs, quit events)
-  - 2D graphics rendering (rectangles, colors)
-  - Game loop with FPS control
-• **Flask** - Web framework for serving the web versions in app.py
-  - Simple routing (/ and /game endpoints)
-  - Template rendering with Jinja2
-  - Development server with debug mode
-
-**Frontend Technologies**
-• **HTML5**
-• **Canvas API** - Used in both game.html and index.html
-  - 2D rendering context for game graphics
-  - Real-time drawing and animation
-• **JavaScript (Vanilla)**
-  - Game Logic - Direct port of Python game mechanics to browser
-  - Event Handling - Keyboard input detection (keydown events)
-  - Game Loop - Using setInterval() for consistent FPS
-  - DOM Manipulation - UI updates for score and game status
-• **CSS3**
-  - Styling - Basic responsive design and visual enhancements
-  - Layout - Flexbox for centering and component arrangement
-
-**Dependencies:**
-• Flask 2.3.3
-• Werkzeug 2.3.7`;
-        } else if (messageCount === 1) {
-          // Second user message - show code modification message
-          botResponse = "Let me modify the code to implement snake growth when eating food.";
-          
-          // Set up follow-up action with proper loading sequence
-          followUpAction = () => {
-            // Show loading animation for 5 seconds, then display success message
-            setTimeout(() => {
-              setIsLoading(false);
-              setTimeout(() => {
-                setIsLoading(true);
-                setTimeout(() => {
-                  const successMessage = {
-                    id: (Date.now() + 2).toString(),
-                    text: "Great! The code has been successfully modified.",
-                    sender: "bot" as const,
-                    timestamp: new Date(),
-                  };
-                  setChatMessages((prev) => [...prev, successMessage]);
-                  setIframeSrc(`http://34.131.96.184:8099/`);
-                  setIsLoading(false);
-                }, 5000);
-              }, 100);
-            }, 0);
-          };
-        } else if (messageCount === 2) {
-          // Third user message - dark mode toggle
-          botResponse = `I'll add a dark mode toggle feature that will switch between light and dark themes. Let me implement this by:
-1. Adding dark mode CSS variables and styles
-2. Adding a toggle button in the UI
-3. Implementing JavaScript functionality to switch themes
-4. Storing the user's preference in localStorage`;
-          
-          followUpAction = () => {
-            setTimeout(() => {
-              setIsLoading(false);
-              setTimeout(() => {
-                setIsLoading(true);
-                setTimeout(() => {
-                  const successMessage = {
-                    id: (Date.now() + 2).toString(),
-                    text: "Great! I've successfully added a dark mode toggle feature to your Snake game application.",
-                    sender: "bot" as const,
-                    timestamp: new Date(),
-                  };
-                  setChatMessages((prev) => [...prev, successMessage]);
-                  setIframeSrc(`http://34.131.96.184:8098/`);
-                  setIsLoading(false);
-                }, 5000);
-              }, 100);
-            }, 0);
-          };
-        } else if (messageCount === 3) {
-          // Fourth user message - change food color
-          botResponse = "Looking at the JavaScript, I can see that the target in this context appears to be the food that the snake eats. Currently, the food color is set to red (#FF0000) in the getFoodColor() function. Let me change it to green as requested.";
-          
-          followUpAction = () => {
-            setTimeout(() => {
-              setIsLoading(false);
-              setTimeout(() => {
-                setIsLoading(true);
-                setTimeout(() => {
-                  const successMessage = {
-                    id: (Date.now() + 2).toString(),
-                    text: "Perfect! I've changed the target (food) color from red (#FF0000) to green (#00FF00). The food that the snake eats will now appear in green instead of red.",
-                    sender: "bot" as const,
-                    timestamp: new Date(),
-                  };
-                  setChatMessages((prev) => [...prev, successMessage]);
-                  setIframeSrc(`http://34.131.96.184:8097/`);
-                  setIsLoading(false);
-                }, 5000);
-              }, 100);
-            }, 0);
-          };
-        } else if (messageCount === 4) {
-          // Fifth user message - rounded corners
-          botResponse = "I can see that the game canvas is styled with the ID #gameCanvas and currently has a border and box shadow. To add rounded corners to the game box, I need to add the border-radius property to the canvas styling.";
-          
-          followUpAction = () => {
-            setTimeout(() => {
-              setIsLoading(false);
-              setTimeout(() => {
-                setIsLoading(true);
-                setTimeout(() => {
-                  const successMessage = {
-                    id: (Date.now() + 2).toString(),
-                    text: "Great! I've added rounded corners to the game canvas by adding border-radius: 15px; to the #gameCanvas CSS rule. This will give the box containing the snake and target nice rounded corners.",
-                    sender: "bot" as const,
-                    timestamp: new Date(),
-                  };
-                  setChatMessages((prev) => [...prev, successMessage]);
-                  setIframeSrc(`http://34.131.96.184:8096/`);
-                  setIsLoading(false);
-                }, 5000);
-              }, 100);
-            }, 0);
-          };
-        } else if (messageCount === 5) {
-          // Sixth user message - reduce speed
-          botResponse = "The FPS (frames per second) determines how often the game loop runs - by reducing it from 30 to 15, the snake will update its position half as frequently, effectively making it move slower. To reduce the speed by half, I need to change the fps value from 30 to 15";
-          
-          followUpAction = () => {
-            setTimeout(() => {
-              setIsLoading(false);
-              setTimeout(() => {
-                setIsLoading(true);
-                setTimeout(() => {
-                  const successMessage = {
-                    id: (Date.now() + 2).toString(),
-                    text: "Perfect! I've successfully reduced the snake's speed by half.",
-                    sender: "bot" as const,
-                    timestamp: new Date(),
-                  };
-                  setChatMessages((prev) => [...prev, successMessage]);
-                  setIframeSrc(`http://34.131.96.184:8095/`);
-                  setIsLoading(false);
-                }, 5000);
-              }, 100);
-            }, 0);
-          };
-        } else {
-          // Fallback for additional messages
-          botResponse = "I'm ready to help you with more modifications! What would you like me to change about your Snake game?";
-        }
-
         const botMessage = {
           id: (Date.now() + 1).toString(),
-          text: botResponse,
+          text: "The AI agent is yet to be implemented. This feature will be available in a future update.",
           sender: "bot" as const,
           timestamp: new Date(),
         };
         
         setChatMessages((prev) => [...prev, botMessage]);
-        setMessageCount(prev => prev + 1);
         setIsLoading(false);
-        
-        // Execute follow-up action if defined
-        if (followUpAction) {
-          followUpAction();
-        }
-      }, 3000); // Increased from 1000ms to 3000ms (3x longer)
+      }, 2000); // 2 second delay to simulate processing
     } catch (error) {
       console.error("Error sending message:", error);
       setIsLoading(false);

@@ -230,6 +230,9 @@ If you encounter any issues or have questions:
 
 ---
 
-**Built with ❤️ by [ShubhamDevPro](https://github.com/ShubhamDevPro)**
+**Built with ❤️ by:**
+- **[ShubhamDevPro](https://github.com/ShubhamDevPro)** 
+- **[Karan Bhatia](https://github.com/carzed1)** 
+- **[Naveen Sharma](https://github.com/naveen-nas)** 
 
 *Making repository management magical, one commit at a time* ✨

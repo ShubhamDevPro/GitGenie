@@ -10,6 +10,14 @@ GitGenie is a comprehensive repository management and development platform that 
 ![Prisma](https://img.shields.io/badge/Prisma-ORM-darkgreen?style=flat&logo=prisma)
 ![TailwindCSS](https://img.shields.io/badge/TailwindCSS-4.0-38B2AC?style=flat&logo=tailwind-css)
 
+## 🎥 **Project Demo**
+
+Watch GitGenie in action! See how the platform streamlines repository management and provides intelligent development tools.
+
+[![GitGenie Demo Video](https://img.shields.io/badge/▶️%20Watch%20Demo-YouTube-red?style=for-the-badge&logo=youtube)](https://youtu.be/206Ojy7Mvtw)
+
+**🔗 Direct Link:** https://youtu.be/206Ojy7Mvtw
+
 ## ✨ Features
 
 ### 🔍 **Intelligent Repository Discovery**

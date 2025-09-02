@@ -4,6 +4,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { useChatStorage, type ChatMessage } from "@/hooks/useChatStorage";
 
 interface ProjectStatus {
   isRunning: boolean;
@@ -27,16 +28,18 @@ export default function ProjectRunnerPage() {
   );
   const [checkingStatus, setCheckingStatus] = useState(false);
   const [iframeSrc, setIframeSrc] = useState<string>("");
-  const [chatMessages, setChatMessages] = useState<
-    Array<{ id: string; text: string; sender: "user" | "bot"; timestamp: Date }>
-  >([
-    {
-      id: "1",
-      text: `Welcome! I'm your AI assistant for the ${repositoryName} project. I can help you understand your code, debug issues, suggest improvements, and answer questions about your project structure. What would you like to know?`,
-      sender: "bot",
-      timestamp: new Date(),
-    },
-  ]);
+  
+  // Use chat storage hook
+  const {
+    messages: chatMessages,
+    isLoaded: chatLoaded,
+    addMessage,
+    addMessages,
+    updateMessages,
+    clearMessages,
+    getStorageInfo
+  } = useChatStorage(repositoryId, repositoryName);
+  
   const [newMessage, setNewMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [projectContextLoaded, setProjectContextLoaded] = useState(false);
@@ -159,14 +162,15 @@ export default function ProjectRunnerPage() {
   const sendMessage = async () => {
     if (!newMessage.trim() || isLoading) return;
 
-    const userMessage = {
+    const userMessage: ChatMessage = {
       id: Date.now().toString(),
       text: newMessage,
-      sender: "user" as const,
+      sender: "user",
       timestamp: new Date(),
     };
 
-    setChatMessages((prev) => [...prev, userMessage]);
+    // Add user message to storage
+    addMessage(userMessage);
     setNewMessage("");
     setIsLoading(true);
 
@@ -189,32 +193,32 @@ export default function ProjectRunnerPage() {
 
       if (response.ok) {
         const data = await response.json();
-        const botMessage = {
+        const botMessage: ChatMessage = {
           id: (Date.now() + 1).toString(),
           text: data.response,
-          sender: "bot" as const,
+          sender: "bot",
           timestamp: new Date(),
         };
-        setChatMessages((prev) => [...prev, botMessage]);
+        addMessage(botMessage);
       } else {
         const errorData = await response.json();
-        const errorMessage = {
+        const errorMessage: ChatMessage = {
           id: (Date.now() + 1).toString(),
           text: `Sorry, I encountered an error: ${errorData.error || 'Unknown error'}. Please try again.`,
-          sender: "bot" as const,
+          sender: "bot",
           timestamp: new Date(),
         };
-        setChatMessages((prev) => [...prev, errorMessage]);
+        addMessage(errorMessage);
       }
     } catch (error) {
       console.error("Error sending message:", error);
-      const errorMessage = {
+      const errorMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         text: "Sorry, I'm having trouble connecting. Please check your internet connection and try again.",
-        sender: "bot" as const,
+        sender: "bot",
         timestamp: new Date(),
       };
-      setChatMessages((prev) => [...prev, errorMessage]);
+      addMessage(errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -322,17 +326,58 @@ export default function ProjectRunnerPage() {
         <div className="w-1/3 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
           {/* Chat Header */}
           <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 flex items-center">
-              🤖 AI Agent
-              {projectContextLoaded && (
-                <span className="ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                  Context Loaded
-                </span>
-              )}
-            </h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              Ask questions about your project code and structure
-            </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 flex items-center">
+                  🤖 AI Agent
+                  {projectContextLoaded && (
+                    <span className="ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                      Context Loaded
+                    </span>
+                  )}
+                  {chatLoaded && (
+                    <span className="ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                      💾 Auto-saved
+                    </span>
+                  )}
+                </h2>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Ask questions about your project code and structure
+                </p>
+              </div>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => {
+                    const info = getStorageInfo();
+                    alert(`Chat Storage Info:
+• Messages in this session: ${info.currentSessionMessages}
+• Total chat sessions: ${info.totalSessions}
+• Storage size: ${info.storageSizeKB} KB
+                    
+Your chats are automatically saved to your browser's local storage.`);
+                  }}
+                  className="p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                  title="Storage info"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => {
+                    if (confirm('Are you sure you want to clear this chat session? This cannot be undone.')) {
+                      clearMessages();
+                    }
+                  }}
+                  className="p-1 text-gray-500 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400"
+                  title="Clear chat"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Chat Messages */}
@@ -340,101 +385,145 @@ export default function ProjectRunnerPage() {
             ref={(el) => setChatContainerRef(el)}
             className="flex-1 overflow-y-auto p-4 space-y-4"
           >
-            {chatMessages.map((message) => (
-              <div
-                key={message.id}
-                className={`flex ${
-                  message.sender === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
-                <div
-                  className={`max-w-[80%] p-3 rounded-lg ${
-                    message.sender === "user"
-                      ? "bg-blue-600 text-white"
-                      : "bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                  }`}
-                >
-                  <div className="text-sm whitespace-pre-line">
-                    {message.text.split('\n').map((line, index) => {
-                      // Handle code blocks with ```
-                      if (line.trim().startsWith('```') && line.trim().endsWith('```') && line.trim().length > 6) {
-                        const code = line.trim().slice(3, -3);
-                        return (
-                          <div key={index} className="my-2 p-2 bg-gray-800 text-green-400 rounded text-xs font-mono overflow-x-auto">
-                            {code}
-                          </div>
-                        );
-                      }
-                      // Handle single line code with `
-                      if (line.includes('`')) {
-                        const parts = line.split(/(`[^`]+`)/g);
-                        return (
-                          <div key={index}>
-                            {parts.map((part, partIndex) => {
-                              if (part.startsWith('`') && part.endsWith('`')) {
-                                return (
-                                  <code key={partIndex} className="bg-gray-200 dark:bg-gray-600 px-1 rounded text-sm font-mono">
-                                    {part.slice(1, -1)}
+            {!chatLoaded ? (
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center">
+                  <div className="w-6 h-6 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin mx-auto mb-2"></div>
+                  <p className="text-sm text-gray-500">Loading chat history...</p>
+                </div>
+              </div>
+            ) : (
+              <>
+                {chatMessages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`flex ${
+                      message.sender === "user" ? "justify-end" : "justify-start"
+                    }`}
+                  >
+                    <div
+                      className={`max-w-[80%] p-3 rounded-lg ${
+                        message.sender === "user"
+                          ? "bg-blue-600 text-white"
+                          : "bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                      }`}
+                    >
+                      <div className="text-sm whitespace-pre-line">
+                        {message.text.split('\n').map((line, index) => {
+                          // Handle code blocks with ```
+                          if (line.trim().startsWith('```') && line.trim().endsWith('```') && line.trim().length > 6) {
+                            const code = line.trim().slice(3, -3);
+                            return (
+                              <div key={index} className="my-2 p-2 bg-gray-800 text-green-400 rounded text-xs font-mono overflow-x-auto">
+                                {code}
+                              </div>
+                            );
+                          }
+                          
+                          // Process line for multiple markdown formats
+                          const processMarkdown = (text: string) => {
+                            const elements: React.ReactNode[] = [];
+                            let currentIndex = 0;
+                            
+                            // Combined regex for bold (**text**) and inline code (`code`)
+                            const markdownRegex = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+                            let match;
+                            
+                            while ((match = markdownRegex.exec(text)) !== null) {
+                              // Add text before the match
+                              if (match.index > currentIndex) {
+                                elements.push(text.slice(currentIndex, match.index));
+                              }
+                              
+                              const matchedText = match[1];
+                              if (matchedText.startsWith('**') && matchedText.endsWith('**')) {
+                                // Bold text
+                                elements.push(
+                                  <strong key={`bold-${match.index}`}>
+                                    {matchedText.slice(2, -2)}
+                                  </strong>
+                                );
+                              } else if (matchedText.startsWith('`') && matchedText.endsWith('`')) {
+                                // Inline code
+                                elements.push(
+                                  <code 
+                                    key={`code-${match.index}`} 
+                                    className="bg-gray-200 dark:bg-gray-600 px-1 rounded text-sm font-mono"
+                                  >
+                                    {matchedText.slice(1, -1)}
                                   </code>
                                 );
                               }
-                              return part;
-                            })}
-                          </div>
-                        );
-                      }
-                      // Handle bold markdown formatting
-                      if (line.includes('**')) {
-                        const parts = line.split(/(\*\*.*?\*\*)/g);
-                        return (
-                          <div key={index}>
-                            {parts.map((part, partIndex) => {
-                              if (part.startsWith('**') && part.endsWith('**')) {
-                                return <strong key={partIndex}>{part.slice(2, -2)}</strong>;
-                              }
-                              return part;
-                            })}
-                          </div>
-                        );
-                      }
-                      // Handle bullet points
-                      if (line.startsWith('• ') || line.startsWith('- ')) {
-                        return <div key={index} className="ml-2">{line}</div>;
-                      }
-                      // Handle numbered lists
-                      if (/^\d+\.\s/.test(line)) {
-                        return <div key={index} className="ml-2">{line}</div>;
-                      }
-                      // Handle indented lines
-                      if (line.startsWith('  - ')) {
-                        return <div key={index} className="ml-4 text-xs opacity-90">{line}</div>;
-                      }
-                      return <div key={index}>{line}</div>;
-                    })}
+                              
+                              currentIndex = match.index + matchedText.length;
+                            }
+                            
+                            // Add remaining text
+                            if (currentIndex < text.length) {
+                              elements.push(text.slice(currentIndex));
+                            }
+                            
+                            return elements.length > 0 ? elements : text;
+                          };
+                          
+                          // Handle bullet points
+                          if (line.startsWith('• ') || line.startsWith('- ')) {
+                            return (
+                              <div key={index} className="ml-2">
+                                {processMarkdown(line)}
+                              </div>
+                            );
+                          }
+                          // Handle numbered lists
+                          if (/^\d+\.\s/.test(line)) {
+                            return (
+                              <div key={index} className="ml-2">
+                                {processMarkdown(line)}
+                              </div>
+                            );
+                          }
+                          // Handle indented lines
+                          if (line.startsWith('  - ')) {
+                            return (
+                              <div key={index} className="ml-4 text-xs opacity-90">
+                                {processMarkdown(line)}
+                              </div>
+                            );
+                          }
+                          
+                          // Regular line with markdown processing
+                          return (
+                            <div key={index}>
+                              {processMarkdown(line)}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <p className="text-xs opacity-70 mt-1">
+                        {message.timestamp.toLocaleTimeString()}
+                      </p>
+                    </div>
                   </div>
-                  <p className="text-xs opacity-70 mt-1">
-                    {message.timestamp.toLocaleTimeString()}
-                  </p>
-                </div>
-              </div>
-            ))}
+                ))}
 
-            {isLoading && (
-              <div className="flex justify-start">
-                <div className="bg-gray-100 dark:bg-gray-700 p-3 rounded-lg">
-                  <div className="flex items-center space-x-2">
-                    <div className="w-2 h-2 bg-gray-600 rounded-full animate-bounce"></div>
-                    <div
-                      className="w-2 h-2 bg-gray-600 rounded-full animate-bounce"
-                      style={{ animationDelay: "0.1s" }}
-                    ></div>
-                    <div
-                      className="w-2 h-2 bg-gray-600 rounded-full animate-bounce"
-                      style={{ animationDelay: "0.2s" }}
-                    ></div>
+                {isLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-gray-100 dark:bg-gray-700 p-3 rounded-lg">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-2 h-2 bg-gray-600 rounded-full animate-bounce"></div>
+                        <div
+                          className="w-2 h-2 bg-gray-600 rounded-full animate-bounce"
+                          style={{ animationDelay: "0.1s" }}
+                        ></div>
+                        <div
+                          className="w-2 h-2 bg-gray-600 rounded-full animate-bounce"
+                          style={{ animationDelay: "0.2s" }}
+                        ></div>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                )}
+              </>
             )}
           </div>
 
@@ -448,11 +537,11 @@ export default function ProjectRunnerPage() {
                 onKeyPress={(e) => e.key === "Enter" && sendMessage()}
                 placeholder="Ask about your code, structure, bugs, or improvements..."
                 className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={isLoading}
+                disabled={isLoading || !chatLoaded}
               />
               <button
                 onClick={sendMessage}
-                disabled={!newMessage.trim() || isLoading}
+                disabled={!newMessage.trim() || isLoading || !chatLoaded}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <svg
@@ -470,6 +559,9 @@ export default function ProjectRunnerPage() {
                 </svg>
               </button>
             </div>
+            {!chatLoaded && (
+              <p className="text-xs text-gray-500 mt-2">Loading chat history...</p>
+            )}
           </div>
         </div>
 

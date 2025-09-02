@@ -172,6 +172,61 @@ Watch GitGenie in action! See how the platform streamlines repository management
 3. Monitor system health and performance
 4. Manage user permissions and access
 
+## 🗂️ **Project Organization Structure**
+
+GitGenie implements a sophisticated project organization system on the GCP VM to ensure consistent naming and better management of projects for each user.
+
+### **Directory Structure**
+```
+/home/{vm_username}/projects/
+├── {gitea_username_1}/
+│   ├── {project_1}/
+│   ├── {project_2}/
+│   └── {project_n}/
+├── {gitea_username_2}/
+│   ├── {project_1}/
+│   └── {project_2}/
+└── legacy/
+    ├── {old_project_1}/
+    └── {old_project_2}/
+```
+
+### **User-Specific Folders**
+- **Path**: `/home/{vm_username}/projects/{gitea_username}/`
+- **Purpose**: Each Gitea user gets their own folder to store all their projects
+- **Benefits**: 
+  - Prevents naming conflicts between users
+  - Easy to identify project ownership
+  - Clear separation of user workspaces
+  - Facilitates AI agent navigation
+
+### **API Endpoints for AI Agents**
+GitGenie provides specialized API endpoints that AI agents can use to understand and manage the project structure:
+
+```javascript
+// Get current user's projects
+GET /api/agent/projects-info?scope=user&format=detailed
+
+// Get all projects overview
+GET /api/agent/projects-info?scope=all&format=summary
+
+// Get specific user's projects
+POST /api/agent/projects-info
+{
+  "giteaUsername": "john-doe",
+  "format": "detailed"
+}
+```
+
+### **AI Agent Integration**
+The project structure is designed to be easily understood by AI agents:
+- Clear path construction: `/home/{vm_username}/projects/{gitea_username}/{project_name}`
+- Utility functions provided in `src/utils/aiAgentHelpers.ts`
+- Permission checking and ownership validation
+- Consistent naming conventions across all projects
+
+For detailed documentation about the project organization structure, see [docs/project-organization.md](docs/project-organization.md).
+
 ## 🏢 **Architecture Overview**
 
 GitGenie follows a modern microservices-inspired architecture:

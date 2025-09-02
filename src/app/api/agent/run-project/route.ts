@@ -50,6 +50,9 @@ export async function POST(request: NextRequest) {
         where: {
           id: repositoryId,
           userId: session.user.id
+        },
+        include: {
+          user: true
         }
       });
 
@@ -63,6 +66,17 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ 
           error: 'Repository clone URL not available' 
         }, { status: 400 });
+      }
+
+      // Get gitea username for better project organization on VM
+      let giteaUsername: string | undefined;
+      try {
+        const { userService } = await import('@/lib/userService');
+        const giteaIntegration = await userService.ensureGiteaIntegration(session.user.id!);
+        giteaUsername = giteaIntegration.giteaUser?.login;
+      } catch (error) {
+        console.warn('Could not get gitea username:', error);
+        // Continue without gitea username - will use fallback structure
       }
 
       // Run project on GCP VM or locally
@@ -92,7 +106,8 @@ export async function POST(request: NextRequest) {
         result = await gcpVmService.runProjectOnVM(
           repositoryId,
           repository.giteaRepoName || repository.repoName,
-          localClonePath
+          localClonePath,
+          giteaUsername
         );
         
         // Add logs to the result

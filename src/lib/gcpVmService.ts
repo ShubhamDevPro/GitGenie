@@ -24,11 +24,24 @@ export class GCPVmService {
   }
 
   private log(message: string) {
-    const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] ${message}`;
-    console.log(logMessage);
+    console.log(`[GCP VM] ${message}`);
     if (this.logCallback) {
-      this.logCallback(logMessage);
+      this.logCallback(message);
+    }
+  }
+
+  /**
+   * Generate the VM project path with user-specific folder structure
+   * @param repoName - Repository name
+   * @param giteaUsername - Optional Gitea username for user-specific folders
+   * @returns VM project path
+   */
+  private getVmProjectPath(repoName: string, giteaUsername?: string): string {
+    if (giteaUsername) {
+      return `/home/${process.env.GCP_VM_USERNAME}/projects/${giteaUsername}/${repoName}`;
+    } else {
+      // Fallback to old structure for backward compatibility
+      return `/home/${process.env.GCP_VM_USERNAME}/projects/${repoName}`;
     }
   }
 
@@ -154,12 +167,15 @@ npm run dev`
     };
   }
 
-  async runProjectOnVM(repositoryId: string, repoName: string, userProjectPath: string): Promise<VMProjectResult> {
+  async runProjectOnVM(repositoryId: string, repoName: string, userProjectPath: string, giteaUsername?: string): Promise<VMProjectResult> {
     const ssh = new NodeSSH();
 
     try {
       this.log(`🚀 Starting deployment of project: ${repoName}`);
       this.log(`📂 Local project path: ${userProjectPath}`);
+      if (giteaUsername) {
+        this.log(`👤 Gitea username: ${giteaUsername}`);
+      }
 
       this.log('🔍 Connecting to VM...');
       await ssh.connect({
@@ -169,9 +185,17 @@ npm run dev`
       });
       this.log('✅ Connected to VM successfully');
 
-      // Create project directory on VM
-      const vmProjectPath = `/home/${process.env.GCP_VM_USERNAME}/projects/${repoName}`;
-      this.log(`📁 Creating project directory: ${vmProjectPath}`);
+      // Create user-specific project directory on VM
+      // Structure: /home/{vm_username}/projects/{gitea_username}/{repo_name}
+      const vmProjectPath = this.getVmProjectPath(repoName, giteaUsername);
+      if (giteaUsername) {
+        this.log(`📁 Creating user-specific project directory: ${vmProjectPath}`);
+        this.log(`🏗️ Project structure: projects/{user}/{repository}`);
+      } else {
+        this.log(`📁 Creating project directory (fallback): ${vmProjectPath}`);
+        this.log(`⚠️ Warning: No gitea username provided, using fallback structure`);
+      }
+      
       await ssh.execCommand(`mkdir -p ${vmProjectPath}`);
 
       // Upload project files to VM
@@ -539,18 +563,21 @@ ${bashContent}`;
     return this.vmExternalIP;
   }
 
-  async checkProjectStatus(repoName: string): Promise<{ isRunning: boolean; pid?: string; port?: number }> {
+  async checkProjectStatus(repoName: string, giteaUsername?: string): Promise<{ isRunning: boolean; pid?: string; port?: number }> {
     const ssh = new NodeSSH();
 
     try {
       this.log(`🔍 Checking status of project: ${repoName}`);
+      if (giteaUsername) {
+        this.log(`👤 For user: ${giteaUsername}`);
+      }
       await ssh.connect({
         host: await this.getVmExternalIP(),
         username: process.env.GCP_VM_USERNAME!,
         privateKeyPath: process.env.GCP_VM_SSH_KEY_PATH!
       });
 
-      const vmProjectPath = `/home/${process.env.GCP_VM_USERNAME}/projects/${repoName}`;
+      const vmProjectPath = this.getVmProjectPath(repoName, giteaUsername);
 
       // Check if PID file exists and if process is running
       const pidResult = await ssh.execCommand(`if [ -f ${vmProjectPath}/server.pid ]; then cat ${vmProjectPath}/server.pid; else echo "no-pid"; fi`);
@@ -598,18 +625,21 @@ ${bashContent}`;
     }
   }
 
-  async getProjectLogs(repoName: string): Promise<string> {
+  async getProjectLogs(repoName: string, giteaUsername?: string): Promise<string> {
     const ssh = new NodeSSH();
 
     try {
       this.log(`📄 Getting logs for project: ${repoName}`);
+      if (giteaUsername) {
+        this.log(`👤 For user: ${giteaUsername}`);
+      }
       await ssh.connect({
         host: await this.getVmExternalIP(),
         username: process.env.GCP_VM_USERNAME!,
         privateKeyPath: process.env.GCP_VM_SSH_KEY_PATH!
       });
 
-      const vmProjectPath = `/home/${process.env.GCP_VM_USERNAME}/projects/${repoName}`;
+      const vmProjectPath = this.getVmProjectPath(repoName, giteaUsername);
 
       // Get server logs
       const logResult = await ssh.execCommand(`cat ${vmProjectPath}/server.log 2>/dev/null || echo "No server log file found"`);
@@ -624,18 +654,21 @@ ${bashContent}`;
     }
   }
 
-  async stopProject(repoName: string): Promise<boolean> {
+  async stopProject(repoName: string, giteaUsername?: string): Promise<boolean> {
     const ssh = new NodeSSH();
 
     try {
       this.log(`🛑 Stopping project: ${repoName}`);
+      if (giteaUsername) {
+        this.log(`👤 For user: ${giteaUsername}`);
+      }
       await ssh.connect({
         host: await this.getVmExternalIP(),
         username: process.env.GCP_VM_USERNAME!,
         privateKeyPath: process.env.GCP_VM_SSH_KEY_PATH!
       });
 
-      const vmProjectPath = `/home/${process.env.GCP_VM_USERNAME}/projects/${repoName}`;
+      const vmProjectPath = this.getVmProjectPath(repoName, giteaUsername);
 
       // Read PID file and kill the process
       const pidResult = await ssh.execCommand(`if [ -f ${vmProjectPath}/server.pid ]; then cat ${vmProjectPath}/server.pid; else echo "no-pid"; fi`);
@@ -661,6 +694,203 @@ ${bashContent}`;
     } catch (error) {
       this.log(`❌ Error stopping project: ${error instanceof Error ? error.message : 'Unknown error'}`);
       return false;
+    } finally {
+      ssh.dispose();
+    }
+  }
+
+  /**
+   * List all projects for a specific user on the VM
+   * This is useful for AI agents to understand user's project structure
+   * @param giteaUsername - Gitea username to list projects for
+   * @returns Array of project information including names and paths
+   */
+  async listUserProjects(giteaUsername: string): Promise<{
+    username: string;
+    userPath: string;
+    projects: Array<{
+      name: string;
+      path: string;
+      isRunning: boolean;
+      lastModified?: string;
+    }>;
+  }> {
+    const ssh = new NodeSSH();
+
+    try {
+      this.log(`📋 Listing projects for user: ${giteaUsername}`);
+      
+      await ssh.connect({
+        host: await this.getVmExternalIP(),
+        username: process.env.GCP_VM_USERNAME!,
+        privateKeyPath: process.env.GCP_VM_SSH_KEY_PATH!
+      });
+
+      const userProjectsPath = `/home/${process.env.GCP_VM_USERNAME}/projects/${giteaUsername}`;
+      
+      // Check if user directory exists
+      const userDirCheck = await ssh.execCommand(`test -d ${userProjectsPath} && echo "exists" || echo "not_found"`);
+      
+      if (userDirCheck.stdout.trim() === 'not_found') {
+        this.log(`📁 No projects directory found for user: ${giteaUsername}`);
+        return {
+          username: giteaUsername,
+          userPath: userProjectsPath,
+          projects: []
+        };
+      }
+
+      // List all directories in user's projects folder
+      const listResult = await ssh.execCommand(`ls -la ${userProjectsPath} | grep '^d' | grep -v '\\.$' | awk '{print $9}'`);
+      
+      if (!listResult.stdout.trim()) {
+        this.log(`📂 User directory exists but no projects found for: ${giteaUsername}`);
+        return {
+          username: giteaUsername,
+          userPath: userProjectsPath,
+          projects: []
+        };
+      }
+
+      const projectNames = listResult.stdout.trim().split('\n').filter(name => name && name !== '.' && name !== '..');
+      const projects = [];
+
+      for (const projectName of projectNames) {
+        const projectPath = `${userProjectsPath}/${projectName}`;
+        
+        // Check if project is running
+        const pidCheck = await ssh.execCommand(`test -f ${projectPath}/server.pid && cat ${projectPath}/server.pid || echo "not_running"`);
+        let isRunning = false;
+        
+        if (pidCheck.stdout.trim() !== 'not_running') {
+          const pid = pidCheck.stdout.trim();
+          const processCheck = await ssh.execCommand(`ps -p ${pid} > /dev/null 2>&1 && echo "running" || echo "stopped"`);
+          isRunning = processCheck.stdout.trim() === 'running';
+        }
+
+        // Get last modified time
+        const modTimeResult = await ssh.execCommand(`stat -c %y ${projectPath} 2>/dev/null || echo "unknown"`);
+        const lastModified = modTimeResult.stdout.trim() !== 'unknown' ? modTimeResult.stdout.trim() : undefined;
+
+        projects.push({
+          name: projectName,
+          path: projectPath,
+          isRunning,
+          lastModified
+        });
+      }
+
+      this.log(`✅ Found ${projects.length} projects for user ${giteaUsername}`);
+      
+      return {
+        username: giteaUsername,
+        userPath: userProjectsPath,
+        projects
+      };
+
+    } catch (error) {
+      this.log(`❌ Error listing projects for user ${giteaUsername}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw error;
+    } finally {
+      ssh.dispose();
+    }
+  }
+
+  /**
+   * List all users and their projects on the VM
+   * This provides a complete overview of the projects folder structure
+   * @returns Array of all users and their projects
+   */
+  async listAllProjects(): Promise<Array<{
+    username: string;
+    userPath: string;
+    projects: Array<{
+      name: string;
+      path: string;
+      isRunning: boolean;
+      lastModified?: string;
+    }>;
+  }>> {
+    const ssh = new NodeSSH();
+
+    try {
+      this.log(`📋 Listing all projects on VM`);
+      
+      await ssh.connect({
+        host: await this.getVmExternalIP(),
+        username: process.env.GCP_VM_USERNAME!,
+        privateKeyPath: process.env.GCP_VM_SSH_KEY_PATH!
+      });
+
+      const projectsBasePath = `/home/${process.env.GCP_VM_USERNAME}/projects`;
+      
+      // Check if projects directory exists
+      const projectsDirCheck = await ssh.execCommand(`test -d ${projectsBasePath} && echo "exists" || echo "not_found"`);
+      
+      if (projectsDirCheck.stdout.trim() === 'not_found') {
+        this.log(`📁 No projects directory found on VM`);
+        return [];
+      }
+
+      // List all user directories and individual project folders (for backward compatibility)
+      const listResult = await ssh.execCommand(`ls -la ${projectsBasePath} | grep '^d' | grep -v '\\.$' | awk '{print $9}'`);
+      
+      if (!listResult.stdout.trim()) {
+        this.log(`📂 Projects directory exists but is empty`);
+        return [];
+      }
+
+      const entries = listResult.stdout.trim().split('\n').filter(name => name && name !== '.' && name !== '..');
+      const allProjects = [];
+
+      for (const entry of entries) {
+        const entryPath = `${projectsBasePath}/${entry}`;
+        
+        // Check if this entry is a user directory (contains subdirectories) or a direct project
+        const subDirCheck = await ssh.execCommand(`find ${entryPath} -maxdepth 1 -type d | wc -l`);
+        const subDirCount = parseInt(subDirCheck.stdout.trim()) - 1; // Subtract 1 for the directory itself
+
+        if (subDirCount > 0) {
+          // This is likely a user directory with projects
+          const userProjects = await this.listUserProjects(entry);
+          allProjects.push(userProjects);
+        } else {
+          // This is likely a legacy direct project folder
+          // Check if project is running
+          const pidCheck = await ssh.execCommand(`test -f ${entryPath}/server.pid && cat ${entryPath}/server.pid || echo "not_running"`);
+          let isRunning = false;
+          
+          if (pidCheck.stdout.trim() !== 'not_running') {
+            const pid = pidCheck.stdout.trim();
+            const processCheck = await ssh.execCommand(`ps -p ${pid} > /dev/null 2>&1 && echo "running" || echo "stopped"`);
+            isRunning = processCheck.stdout.trim() === 'running';
+          }
+
+          // Get last modified time
+          const modTimeResult = await ssh.execCommand(`stat -c %y ${entryPath} 2>/dev/null || echo "unknown"`);
+          const lastModified = modTimeResult.stdout.trim() !== 'unknown' ? modTimeResult.stdout.trim() : undefined;
+
+          // Add as legacy project under special "legacy" user
+          allProjects.push({
+            username: 'legacy',
+            userPath: projectsBasePath,
+            projects: [{
+              name: entry,
+              path: entryPath,
+              isRunning,
+              lastModified
+            }]
+          });
+        }
+      }
+
+      this.log(`✅ Found projects from ${allProjects.length} users/categories`);
+      
+      return allProjects;
+
+    } catch (error) {
+      this.log(`❌ Error listing all projects: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw error;
     } finally {
       ssh.dispose();
     }

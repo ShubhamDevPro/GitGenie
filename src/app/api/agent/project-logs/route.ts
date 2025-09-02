@@ -24,6 +24,9 @@ export async function POST(request: NextRequest) {
       where: {
         id: repositoryId,
         userId: session.user.id
+      },
+      include: {
+        user: true
       }
     });
 
@@ -33,9 +36,21 @@ export async function POST(request: NextRequest) {
       }, { status: 404 });
     }
 
+    // Get gitea username for proper project path resolution
+    let giteaUsername: string | undefined;
+    try {
+      const { userService } = await import('@/lib/userService');
+      const giteaIntegration = await userService.ensureGiteaIntegration(session.user.id!);
+      giteaUsername = giteaIntegration.giteaUser?.login;
+    } catch (error) {
+      console.warn('Could not get gitea username:', error);
+      // Continue without gitea username - will use fallback structure
+    }
+
     const gcpVmService = new GCPVmService();
     const logs = await gcpVmService.getProjectLogs(
-      repository.giteaRepoName || repository.repoName
+      repository.giteaRepoName || repository.repoName,
+      giteaUsername
     );
 
     return NextResponse.json({

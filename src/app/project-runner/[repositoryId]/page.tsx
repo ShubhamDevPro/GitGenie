@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useChatStorage, type ChatMessage } from "@/hooks/useChatStorage";
+import ReactMarkdown from "react-markdown";
 
 interface ProjectStatus {
   isRunning: boolean;
@@ -408,96 +409,42 @@ Your chats are automatically saved to your browser's local storage.`);
                           : "bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                       }`}
                     >
-                      <div className="text-sm whitespace-pre-line">
-                        {message.text.split('\n').map((line, index) => {
-                          // Handle code blocks with ```
-                          if (line.trim().startsWith('```') && line.trim().endsWith('```') && line.trim().length > 6) {
-                            const code = line.trim().slice(3, -3);
-                            return (
-                              <div key={index} className="my-2 p-2 bg-gray-800 text-green-400 rounded text-xs font-mono overflow-x-auto">
-                                {code}
-                              </div>
-                            );
-                          }
-                          
-                          // Process line for multiple markdown formats
-                          const processMarkdown = (text: string) => {
-                            const elements: React.ReactNode[] = [];
-                            let currentIndex = 0;
-                            
-                            // Combined regex for bold (**text**) and inline code (`code`)
-                            const markdownRegex = /(\*\*[^*]+\*\*|`[^`]+`)/g;
-                            let match;
-                            
-                            while ((match = markdownRegex.exec(text)) !== null) {
-                              // Add text before the match
-                              if (match.index > currentIndex) {
-                                elements.push(text.slice(currentIndex, match.index));
-                              }
-                              
-                              const matchedText = match[1];
-                              if (matchedText.startsWith('**') && matchedText.endsWith('**')) {
-                                // Bold text
-                                elements.push(
-                                  <strong key={`bold-${match.index}`}>
-                                    {matchedText.slice(2, -2)}
-                                  </strong>
-                                );
-                              } else if (matchedText.startsWith('`') && matchedText.endsWith('`')) {
-                                // Inline code
-                                elements.push(
-                                  <code 
-                                    key={`code-${match.index}`} 
-                                    className="bg-gray-200 dark:bg-gray-600 px-1 rounded text-sm font-mono"
-                                  >
-                                    {matchedText.slice(1, -1)}
-                                  </code>
-                                );
-                              }
-                              
-                              currentIndex = match.index + matchedText.length;
-                            }
-                            
-                            // Add remaining text
-                            if (currentIndex < text.length) {
-                              elements.push(text.slice(currentIndex));
-                            }
-                            
-                            return elements.length > 0 ? elements : text;
-                          };
-                          
-                          // Handle bullet points
-                          if (line.startsWith('• ') || line.startsWith('- ')) {
-                            return (
-                              <div key={index} className="ml-2">
-                                {processMarkdown(line)}
-                              </div>
-                            );
-                          }
-                          // Handle numbered lists
-                          if (/^\d+\.\s/.test(line)) {
-                            return (
-                              <div key={index} className="ml-2">
-                                {processMarkdown(line)}
-                              </div>
-                            );
-                          }
-                          // Handle indented lines
-                          if (line.startsWith('  - ')) {
-                            return (
-                              <div key={index} className="ml-4 text-xs opacity-90">
-                                {processMarkdown(line)}
-                              </div>
-                            );
-                          }
-                          
-                          // Regular line with markdown processing
-                          return (
-                            <div key={index}>
-                              {processMarkdown(line)}
-                            </div>
-                          );
-                        })}
+                      <div className="text-sm">
+                        <ReactMarkdown
+                          components={{
+                            // Custom styling for different elements
+                            p: ({ children }) => <div className="mb-2 last:mb-0">{children}</div>,
+                            strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                            code: ({ children }) => (
+                              <code className="bg-gray-200 dark:bg-gray-600 px-1 py-0.5 rounded text-sm font-mono">
+                                {children}
+                              </code>
+                            ),
+                            pre: ({ children }) => (
+                              <pre className="my-2 p-2 bg-gray-800 text-green-400 rounded text-xs font-mono overflow-x-auto">
+                                {children}
+                              </pre>
+                            ),
+                            ul: ({ children }) => <ul className="ml-4 space-y-1">{children}</ul>,
+                            ol: ({ children }) => <ol className="ml-4 space-y-1">{children}</ol>,
+                            li: ({ children }) => <li className="list-disc">{children}</li>,
+                            h1: ({ children }) => <h1 className="text-lg font-bold mb-2">{children}</h1>,
+                            h2: ({ children }) => <h2 className="text-base font-bold mb-2">{children}</h2>,
+                            h3: ({ children }) => <h3 className="text-sm font-bold mb-1">{children}</h3>,
+                            blockquote: ({ children }) => (
+                              <blockquote className="border-l-4 border-gray-300 pl-3 italic opacity-90">
+                                {children}
+                              </blockquote>
+                            ),
+                            a: ({ children, href }) => (
+                              <a href={href} className="text-blue-500 hover:underline" target="_blank" rel="noopener noreferrer">
+                                {children}
+                              </a>
+                            ),
+                          }}
+                        >
+                          {message.text}
+                        </ReactMarkdown>
                       </div>
                       <p className="text-xs opacity-70 mt-1">
                         {message.timestamp.toLocaleTimeString()}

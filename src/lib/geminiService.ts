@@ -224,7 +224,10 @@ Please respond to the user's question about their project. Keep your response fo
         throw new Error('Received empty response from Gemini API');
       }
       
-      return responseText;
+      // Filter out sensitive information from the response
+      const filteredResponse = this.filterSensitiveInformation(responseText);
+      
+      return filteredResponse;
     } catch (error) {
       console.error('Error generating AI response:', error);
       
@@ -321,6 +324,9 @@ INSTRUCTIONS:
 - If asked about files not in the context, politely mention you can only see the files listed above
 - Keep responses focused and practical
 - Use markdown formatting for code snippets when appropriate
+- IMPORTANT: Do not mention specific port numbers, IP addresses, debug settings, or server configuration details
+- Instead use generic terms like "configured port", "localhost", "debug mode", etc.
+- Focus on code functionality and development guidance rather than deployment details
 
 `;
 
@@ -346,7 +352,9 @@ OWNER: ${context.giteaUsername}
 FILES: ${context.files.length} files found
 ${context.packageJson ? `DEPENDENCIES: ${Object.keys(context.packageJson.dependencies || {}).slice(0, 5).join(', ')}` : ''}
 
-This is a ${this.detectProjectType(context)} project. Please help the user with questions about their code, debugging, and improvements.`;
+This is a ${this.detectProjectType(context)} project. Please help the user with questions about their code, debugging, and improvements.
+
+IMPORTANT: Do not mention specific port numbers, IP addresses, debug settings, or server configuration details. Focus on code functionality and development guidance.`;
   }
 
   /**
@@ -358,6 +366,47 @@ This is a ${this.detectProjectType(context)} project. Please help the user with 
     if (context.files.some(f => f.name.endsWith('.java'))) return 'Java';
     if (context.files.some(f => f.name.endsWith('.php'))) return 'PHP';
     return 'software development';
+  }
+
+  /**
+   * Filter out sensitive information from AI responses
+   */
+  private filterSensitiveInformation(text: string): string {
+    let filteredText = text;
+
+    // Remove port numbers (common patterns)
+    filteredText = filteredText.replace(/port\s+\d+/gi, 'the configured port');
+    filteredText = filteredText.replace(/:\d{2,5}/g, ':PORT');
+    filteredText = filteredText.replace(/on port \d+/gi, 'on the configured port');
+    filteredText = filteredText.replace(/listening on \d+/gi, 'listening on the configured port');
+
+    // Remove debug settings
+    filteredText = filteredText.replace(/debug\s*=\s*true/gi, 'debug mode');
+    filteredText = filteredText.replace(/debug=true/gi, 'debug mode');
+    filteredText = filteredText.replace(/--debug/gi, 'debug flag');
+
+    // Remove IP addresses
+    filteredText = filteredText.replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[IP_ADDRESS]');
+    filteredText = filteredText.replace(/0\.0\.0\.0/gi, 'localhost');
+    filteredText = filteredText.replace(/127\.0\.0\.1/gi, 'localhost');
+
+    // Remove localhost with ports
+    filteredText = filteredText.replace(/localhost:\d+/gi, 'localhost');
+    filteredText = filteredText.replace(/127\.0\.0\.1:\d+/gi, 'localhost');
+
+    // Remove specific development server patterns
+    filteredText = filteredText.replace(/running on http:\/\/[^\s]+/gi, 'running locally');
+    filteredText = filteredText.replace(/server running at [^\s]+/gi, 'server running locally');
+
+    // Remove file paths that might contain sensitive info
+    filteredText = filteredText.replace(/\/home\/[^\/\s]+\/projects\/[^\s]*/gi, 'your project directory');
+    filteredText = filteredText.replace(/\/tmp\/[^\s]*/gi, 'temporary directory');
+
+    // Remove VM or server specific paths
+    filteredText = filteredText.replace(/\/var\/[^\s]*/gi, 'system directory');
+    filteredText = filteredText.replace(/\/opt\/[^\s]*/gi, 'installation directory');
+
+    return filteredText;
   }
 
   /**

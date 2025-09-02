@@ -32,13 +32,14 @@ export default function ProjectRunnerPage() {
   >([
     {
       id: "1",
-      text: `Welcome! I'm your AI assistant for project development. Currently, the AI agent functionality is being developed and will be available in a future update. You can still interact with the chat interface.`,
+      text: `Welcome! I'm your AI assistant for the ${repositoryName} project. I can help you understand your code, debug issues, suggest improvements, and answer questions about your project structure. What would you like to know?`,
       sender: "bot",
       timestamp: new Date(),
     },
   ]);
   const [newMessage, setNewMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [projectContextLoaded, setProjectContextLoaded] = useState(false);
 
   const [chatContainerRef, setChatContainerRef] = useState<HTMLDivElement | null>(null);
 
@@ -73,8 +74,27 @@ export default function ProjectRunnerPage() {
   useEffect(() => {
     if (repositoryId) {
       checkProjectStatus();
+      loadProjectContext();
     }
   }, [repositoryId]);
+
+  // Load project context for AI chat
+  const loadProjectContext = async () => {
+    if (!repositoryId) return;
+
+    try {
+      const response = await fetch(`/api/agent/chat?repositoryId=${repositoryId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setProjectContextLoaded(true);
+        console.log('Project context loaded:', data.projectContext);
+      } else {
+        console.warn('Failed to load project context');
+      }
+    } catch (error) {
+      console.error('Error loading project context:', error);
+    }
+  };
 
   // Set iframe source based on project status
   useEffect(() => {
@@ -151,20 +171,51 @@ export default function ProjectRunnerPage() {
     setIsLoading(true);
 
     try {
-      // Simulate AI processing delay
-      setTimeout(() => {
+      const response = await fetch('/api/agent/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          repositoryId,
+          message: newMessage,
+          conversationHistory: chatMessages.map(msg => ({
+            sender: msg.sender,
+            text: msg.text,
+            timestamp: msg.timestamp.toISOString()
+          }))
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
         const botMessage = {
           id: (Date.now() + 1).toString(),
-          text: "The AI agent is yet to be implemented. This feature will be available in a future update.",
+          text: data.response,
           sender: "bot" as const,
           timestamp: new Date(),
         };
-        
         setChatMessages((prev) => [...prev, botMessage]);
-        setIsLoading(false);
-      }, 2000); // 2 second delay to simulate processing
+      } else {
+        const errorData = await response.json();
+        const errorMessage = {
+          id: (Date.now() + 1).toString(),
+          text: `Sorry, I encountered an error: ${errorData.error || 'Unknown error'}. Please try again.`,
+          sender: "bot" as const,
+          timestamp: new Date(),
+        };
+        setChatMessages((prev) => [...prev, errorMessage]);
+      }
     } catch (error) {
       console.error("Error sending message:", error);
+      const errorMessage = {
+        id: (Date.now() + 1).toString(),
+        text: "Sorry, I'm having trouble connecting. Please check your internet connection and try again.",
+        sender: "bot" as const,
+        timestamp: new Date(),
+      };
+      setChatMessages((prev) => [...prev, errorMessage]);
+    } finally {
       setIsLoading(false);
     }
   };
@@ -273,9 +324,14 @@ export default function ProjectRunnerPage() {
           <div className="p-4 border-b border-gray-200 dark:border-gray-700">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 flex items-center">
               🤖 AI Agent
+              {projectContextLoaded && (
+                <span className="ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                  Context Loaded
+                </span>
+              )}
             </h2>
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              Ask questions about your project
+              Ask questions about your project code and structure
             </p>
           </div>
 
@@ -300,6 +356,33 @@ export default function ProjectRunnerPage() {
                 >
                   <div className="text-sm whitespace-pre-line">
                     {message.text.split('\n').map((line, index) => {
+                      // Handle code blocks with ```
+                      if (line.trim().startsWith('```') && line.trim().endsWith('```') && line.trim().length > 6) {
+                        const code = line.trim().slice(3, -3);
+                        return (
+                          <div key={index} className="my-2 p-2 bg-gray-800 text-green-400 rounded text-xs font-mono overflow-x-auto">
+                            {code}
+                          </div>
+                        );
+                      }
+                      // Handle single line code with `
+                      if (line.includes('`')) {
+                        const parts = line.split(/(`[^`]+`)/g);
+                        return (
+                          <div key={index}>
+                            {parts.map((part, partIndex) => {
+                              if (part.startsWith('`') && part.endsWith('`')) {
+                                return (
+                                  <code key={partIndex} className="bg-gray-200 dark:bg-gray-600 px-1 rounded text-sm font-mono">
+                                    {part.slice(1, -1)}
+                                  </code>
+                                );
+                              }
+                              return part;
+                            })}
+                          </div>
+                        );
+                      }
                       // Handle bold markdown formatting
                       if (line.includes('**')) {
                         const parts = line.split(/(\*\*.*?\*\*)/g);
@@ -315,7 +398,11 @@ export default function ProjectRunnerPage() {
                         );
                       }
                       // Handle bullet points
-                      if (line.startsWith('• ')) {
+                      if (line.startsWith('• ') || line.startsWith('- ')) {
+                        return <div key={index} className="ml-2">{line}</div>;
+                      }
+                      // Handle numbered lists
+                      if (/^\d+\.\s/.test(line)) {
                         return <div key={index} className="ml-2">{line}</div>;
                       }
                       // Handle indented lines
@@ -359,7 +446,7 @@ export default function ProjectRunnerPage() {
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
                 onKeyPress={(e) => e.key === "Enter" && sendMessage()}
-                placeholder="Ask about your project..."
+                placeholder="Ask about your code, structure, bugs, or improvements..."
                 className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={isLoading}
               />

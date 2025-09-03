@@ -233,14 +233,7 @@ export default function ProjectRunnerPage() {
       if (restartResponse.ok) {
         const restartData = await restartResponse.json();
         
-        // Step 4: Update iframe URL with new port if provided
-        if (restartData.port && restartData.vmIP) {
-          const newProjectUrl = `http://${restartData.vmIP}:${restartData.port}`;
-          setIframeSrc(newProjectUrl);
-          console.log(`🔄 Updated iframe URL to: ${newProjectUrl}`);
-        }
-        
-        // Step 5: Check new project status
+        // Step 4: Check new project status
         await new Promise(resolve => setTimeout(resolve, 2000));
         await checkProjectStatus();
 

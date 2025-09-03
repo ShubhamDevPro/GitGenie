@@ -951,14 +951,14 @@ ${bashContent}`;
       let startCommand: string;
       
       if (hasAppPy.stdout.trim() === 'yes') {
-        // Python/Flask project - use simple backgrounding with immediate return
-        startCommand = `cd ${vmProjectPath} && (FLASK_APP=app.py FLASK_ENV=development python3 -m flask run --host=0.0.0.0 --port=${port} > server.log 2>&1 & echo $! > server.pid) && sleep 1`;
+        // Python/Flask project
+        startCommand = `cd ${vmProjectPath} && FLASK_APP=app.py FLASK_ENV=development FLASK_RUN_PORT=${port} FLASK_RUN_HOST=0.0.0.0 PYTHONUNBUFFERED=1 python3 -m flask run --host=0.0.0.0 --port=${port} > server.log 2>&1 & echo $! > server.pid`;
       } else if (hasPackageJson.stdout.trim() === 'yes') {
         // Node.js project
-        startCommand = `cd ${vmProjectPath} && (PORT=${port} npm start > server.log 2>&1 & echo $! > server.pid) && sleep 1`;
+        startCommand = `cd ${vmProjectPath} && PORT=${port} npm start > server.log 2>&1 & echo $! > server.pid`;
       } else {
         // Generic approach
-        startCommand = `cd ${vmProjectPath} && (python3 -m http.server ${port} > server.log 2>&1 & echo $! > server.pid) && sleep 1`;
+        startCommand = `cd ${vmProjectPath} && python3 -m http.server ${port} > server.log 2>&1 & echo $! > server.pid`;
       }
 
       this.log(`🎯 Executing start command: ${startCommand}`);

@@ -5,6 +5,9 @@ import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useChatStorage, type ChatMessage } from "@/hooks/useChatStorage";
+import { useAgentSocket } from "@/hooks/useAgentSocket";
+import { AgentLogsViewer } from "@/components/AgentLogsViewer";
+import { testAgentConnection } from "@/utils/agentConnectionUtils";
 import ReactMarkdown from "react-markdown";
 
 interface ProjectStatus {
@@ -40,10 +43,50 @@ export default function ProjectRunnerPage() {
     clearMessages,
     getStorageInfo
   } = useChatStorage(repositoryId, repositoryName);
+
+  // Use agent socket hook for real-time updates
+  const {
+    isConnected: socketConnected,
+    logs: agentLogs,
+    progress: agentProgress,
+    fileOperations: agentFileOps,
+    isAgentRunning,
+    startMonitoring,
+    stopMonitoring,
+    clearLogs: clearAgentLogs,
+    addLog: addAgentLog,
+  } = useAgentSocket({
+    vmIP: vmIP || "",
+    onAgentComplete: (data) => {
+      console.log("🎉 Agent completed via socket:", data);
+      // Add completion message to chat
+      const completionMessage: ChatMessage = {
+        id: Date.now().toString(),
+        text: `🎉 **Agent Task Completed Successfully!**\n\nThe OpenAI agent has finished processing your request. Check the logs below for detailed information about what was accomplished.\n\n*Session: ${data.session_id}*`,
+        sender: "bot",
+        timestamp: new Date(),
+      };
+      addMessage(completionMessage);
+    },
+    onAgentError: (data) => {
+      console.error("💥 Agent error via socket:", data);
+      // Add error message to chat
+      const errorMessage: ChatMessage = {
+        id: Date.now().toString(),
+        text: `💥 **Agent Error**: ${data.error}\n\nThe OpenAI agent encountered an issue while processing your request. Please try again or rephrase your request.\n\n*Session: ${data.session_id}*`,
+        sender: "bot",
+        timestamp: new Date(),
+      };
+      addMessage(errorMessage);
+    },
+  });
   
   const [newMessage, setNewMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [projectContextLoaded, setProjectContextLoaded] = useState(false);
+  const [isRestarting, setIsRestarting] = useState(false);
+  const [showAgentLogs, setShowAgentLogs] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
 
   const [chatContainerRef, setChatContainerRef] = useState<HTMLDivElement | null>(null);
 
@@ -160,6 +203,101 @@ export default function ProjectRunnerPage() {
     }
   };
 
+  const restartProject = async () => {
+    if (!repositoryId || isRestarting) return;
+
+    setIsRestarting(true);
+
+    try {
+      // Add a restart notification message to chat
+      const restartMessage: ChatMessage = {
+        id: Date.now().toString(),
+        text: "🔄 **Auto-Restart**: Restarting project to apply code changes...",
+        sender: "bot",
+        timestamp: new Date(),
+      };
+      addMessage(restartMessage);
+
+      // Use the new restart-in-place endpoint that preserves agent changes
+      console.log("� Restarting project in place (preserving agent changes)...");
+      const restartResponse = await fetch("/api/agent/restart-project", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ 
+          repositoryId
+        }),
+      });
+
+      if (restartResponse.ok) {
+        const restartData = await restartResponse.json();
+        
+        // Step 4: Update iframe URL with new port if provided
+        if (restartData.port && restartData.vmIP) {
+          const newProjectUrl = `http://${restartData.vmIP}:${restartData.port}`;
+          setIframeSrc(newProjectUrl);
+          console.log(`🔄 Updated iframe URL to: ${newProjectUrl}`);
+        }
+        
+        // Step 5: Check new project status
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        await checkProjectStatus();
+
+        // Add success message
+        const successMessage: ChatMessage = {
+          id: (Date.now() + 1).toString(),
+          text: "✅ **Restart Complete**: Project restarted successfully! Your changes are now live.",
+          sender: "bot",
+          timestamp: new Date(),
+        };
+        addMessage(successMessage);
+
+      } else {
+        const errorData = await restartResponse.json();
+        throw new Error(errorData.error || "Failed to restart project");
+      }
+
+    } catch (error) {
+      console.error("Error restarting project:", error);
+      
+      // Add error message
+      const errorMessage: ChatMessage = {
+        id: (Date.now() + 2).toString(),
+        text: "⚠️ **Restart Failed**: Could not restart project automatically. You may need to restart manually using the project controls.",
+        sender: "bot",
+        timestamp: new Date(),
+      };
+      addMessage(errorMessage);
+    } finally {
+      setIsRestarting(false);
+    }
+  };
+
+  // Test agent connection
+  const testConnection = async () => {
+    if (!vmIP || testingConnection) return;
+    
+    setTestingConnection(true);
+    try {
+      const result = await testAgentConnection(vmIP);
+      addAgentLog(
+        result.success 
+          ? `✅ Connection test passed: ${result.message}` 
+          : `❌ Connection test failed: ${result.message}`,
+        result.success ? 'success' : 'error'
+      );
+      
+      if (result.success) {
+        setShowAgentLogs(true);
+      }
+    } catch (error) {
+      addAgentLog(`❌ Connection test error: ${error}`, 'error');
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
   const sendMessage = async () => {
     if (!newMessage.trim() || isLoading) return;
 
@@ -194,18 +332,70 @@ export default function ProjectRunnerPage() {
 
       if (response.ok) {
         const data = await response.json();
+        
+        // Extract response and metadata
+        const responseText = data.response;
+        const intent = data.intent || 'explanation';
+        const agentType = data.agentType || 'gemini';
+        const sessionId = data.sessionId;
+        
+        // Create different message styles based on agent type
+        let messageText = responseText;
+        let messagePrefix = '';
+        
+        if (agentType === 'openai') {
+          messagePrefix = '🤖 **OpenAI Code Agent**: ';
+          if (sessionId) {
+            messageText += `\n\n---\n*Session: ${sessionId}*`;
+          }
+        } else if (agentType === 'gemini') {
+          messagePrefix = '💎 **Gemini Assistant**: ';
+        }
+        
         const botMessage: ChatMessage = {
           id: (Date.now() + 1).toString(),
-          text: data.response,
+          text: messagePrefix + messageText,
           sender: "bot",
           timestamp: new Date(),
         };
         addMessage(botMessage);
+        
+        // Show project context loaded status
+        if (data.projectInfo && !projectContextLoaded) {
+          setProjectContextLoaded(true);
+        }
+
+        // Auto-restart project if OpenAI agent made code changes
+        if (data.shouldRestartProject && agentType === 'openai' && projectStatus?.isRunning) {
+          console.log("🔄 OpenAI Agent completed successfully, triggering project restart...");
+          // Small delay to let the user see the completion message first
+          setTimeout(() => {
+            restartProject();
+          }, 2000);
+        }
+
+        // Start monitoring the session if it's an OpenAI agent request
+        if (agentType === 'openai' && sessionId) {
+          addAgentLog(`🚀 Started monitoring OpenAI agent session: ${sessionId}`, 'info');
+          startMonitoring(sessionId);
+          // Auto-show logs when agent starts
+          setShowAgentLogs(true);
+        }
       } else {
         const errorData = await response.json();
+        
+        // Handle different types of errors
+        let errorMessageText = '';
+        
+        if (errorData.fallbackToGemini) {
+          errorMessageText = `⚠️ **OpenAI Agent Issue**: ${errorData.error || 'Service temporarily unavailable'}\n\n💡 Try rephrasing your request as a question for Gemini, or check if the VM agent is running.`;
+        } else {
+          errorMessageText = `Sorry, I encountered an error: ${errorData.error || 'Unknown error'}. Please try again.`;
+        }
+        
         const errorMessage: ChatMessage = {
           id: (Date.now() + 1).toString(),
-          text: `Sorry, I encountered an error: ${errorData.error || 'Unknown error'}. Please try again.`,
+          text: errorMessageText,
           sender: "bot",
           timestamp: new Date(),
         };
@@ -330,7 +520,7 @@ export default function ProjectRunnerPage() {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 flex items-center">
-                  🤖 AI Agent
+                  🤖 Dual AI Agent
                   {projectContextLoaded && (
                     <span className="ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
                       Context Loaded
@@ -341,12 +531,61 @@ export default function ProjectRunnerPage() {
                       💾 Auto-saved
                     </span>
                   )}
+                  {projectStatus?.isRunning && (
+                    <span className="ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                      🔄 Auto-restart
+                    </span>
+                  )}
+                  {isRestarting && (
+                    <span className="ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+                      ⏳ Restarting...
+                    </span>
+                  )}
+                  {socketConnected && (
+                    <span className="ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                      🔌 Socket Connected
+                    </span>
+                  )}
+                  {isAgentRunning && (
+                    <span className="ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                      <div className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-pulse mr-1"></div>
+                      Agent Running
+                    </span>
+                  )}
                 </h2>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Ask questions about your project code and structure
+                  💎 <strong>Gemini</strong>: Explanations & Questions | 🤖 <strong>OpenAI Agent</strong>: Code Changes & Auto-restart
                 </p>
               </div>
               <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setShowAgentLogs(!showAgentLogs)}
+                  className={`p-1 transition-colors ${showAgentLogs 
+                    ? 'text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300' 
+                    : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                  }`}
+                  title="Toggle agent logs"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </button>
+                {vmIP && (
+                  <button
+                    onClick={testConnection}
+                    disabled={testingConnection}
+                    className="p-1 text-gray-500 hover:text-green-600 dark:text-gray-400 dark:hover:text-green-400 transition-colors"
+                    title="Test agent connection"
+                  >
+                    {testingConnection ? (
+                      <div className="w-4 h-4 border border-gray-400 border-t-green-600 rounded-full animate-spin"></div>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
+                      </svg>
+                    )}
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     const info = getStorageInfo();
@@ -384,7 +623,7 @@ Your chats are automatically saved to your browser's local storage.`);
           {/* Chat Messages */}
           <div 
             ref={(el) => setChatContainerRef(el)}
-            className="flex-1 overflow-y-auto p-4 space-y-4"
+            className={`overflow-y-auto p-4 space-y-4 ${showAgentLogs ? 'flex-none h-1/2' : 'flex-1'}`}
           >
             {!chatLoaded ? (
               <div className="flex items-center justify-center h-full">
@@ -474,6 +713,20 @@ Your chats are automatically saved to your browser's local storage.`);
             )}
           </div>
 
+          {/* Agent Logs Viewer (when toggled) */}
+          {showAgentLogs && (
+            <div className="flex-1 border-t border-gray-200 dark:border-gray-700">
+              <AgentLogsViewer
+                logs={agentLogs}
+                progress={agentProgress}
+                fileOperations={agentFileOps}
+                isAgentRunning={isAgentRunning}
+                isConnected={socketConnected}
+                onClear={clearAgentLogs}
+              />
+            </div>
+          )}
+
           {/* Chat Input */}
           <div className="p-4 border-t border-gray-200 dark:border-gray-700">
             <div className="flex items-center space-x-2">
@@ -508,6 +761,11 @@ Your chats are automatically saved to your browser's local storage.`);
             </div>
             {!chatLoaded && (
               <p className="text-xs text-gray-500 mt-2">Loading chat history...</p>
+            )}
+            {showAgentLogs && (
+              <p className="text-xs text-blue-600 dark:text-blue-400 mt-2">
+                🔍 Agent logs are visible above. Real-time updates will appear during code modifications.
+              </p>
             )}
           </div>
         </div>

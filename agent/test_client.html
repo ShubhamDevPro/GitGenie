@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitGenie Agent Real-time Logs</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        .controls {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, textarea, button {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover {
+            background: #5a6fd8;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .logs-container {
+            height: 500px;
+            overflow-y: auto;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #fff;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin-bottom: 10px;
+            padding: 8px;
+            border-radius: 4px;
+            animation: fadeIn 0.3s ease-in;
+        }
+        .log-info {
+            background: rgba(52, 152, 219, 0.2);
+            border-left: 4px solid #3498db;
+        }
+        .log-success {
+            background: rgba(46, 204, 113, 0.2);
+            border-left: 4px solid #2ecc71;
+        }
+        .log-warning {
+            background: rgba(241, 196, 15, 0.2);
+            border-left: 4px solid #f1c40f;
+        }
+        .log-error {
+            background: rgba(231, 76, 60, 0.2);
+            border-left: 4px solid #e74c3c;
+        }
+        .timestamp {
+            color: #888;
+            font-size: 10px;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #eee;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3498db, #2ecc71);
+            transition: width 0.3s ease;
+        }
+        .status {
+            padding: 10px 20px;
+            border-bottom: 1px solid #eee;
+            font-weight: bold;
+        }
+        .status.connected {
+            background: #d5edda;
+            color: #155724;
+        }
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 GitGenie Agent Real-time Logs</h1>
+            <p>Monitor your backend agent activities in real-time</p>
+        </div>
+        
+        <div class="status" id="connectionStatus">
+            🔌 Connecting to server...
+        </div>
+        
+        <div class="controls">
+            <div class="form-group">
+                <label for="projectPath">Project Path:</label>
+                <input type="text" id="projectPath" placeholder="Enter the path to your project" 
+                       value="C:\\temp\\test-project">
+            </div>
+            <div class="form-group">
+                <label for="sessionId">Session ID:</label>
+                <input type="text" id="sessionId" placeholder="Enter session ID" 
+                       value="test-session-001">
+            </div>
+            <div class="form-group">
+                <label for="userInstructions">User Instructions (optional):</label>
+                <textarea id="userInstructions" rows="3" 
+                          placeholder="Enter any specific instructions for the agent"></textarea>
+            </div>
+            <button onclick="startAgent()" id="startBtn">🚀 Start Agent</button>
+        </div>
+        
+        <div id="progressContainer" style="display: none; padding: 20px;">
+            <div id="progressText">Initializing...</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+            </div>
+        </div>
+        
+        <div class="logs-container" id="logsContainer">
+            <div class="log-entry log-info">
+                <span class="timestamp">[System]</span> Waiting for connection...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io('http://localhost:5000');
+        const logsContainer = document.getElementById('logsContainer');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const startBtn = document.getElementById('startBtn');
+
+        socket.on('connect', function() {
+            updateConnectionStatus(true);
+            addLog('✅ Connected to GitGenie Agent server', 'success');
+        });
+
+        socket.on('disconnect', function() {
+            updateConnectionStatus(false);
+            addLog('❌ Disconnected from server', 'error');
+        });
+
+        socket.on('status', function(data) {
+            addLog('📡 ' + data.message, 'info');
+        });
+
+        socket.on('agent_log', function(data) {
+            addLog(data.message, data.type, data.timestamp);
+        });
+
+        socket.on('agent_progress', function(data) {
+            updateProgress(data);
+            addLog(`⏳ ${data.step}: ${data.current}/${data.total} (${data.percentage}%)${data.message ? ' - ' + data.message : ''}`, 'info');
+        });
+
+        socket.on('file_operation', function(data) {
+            const emoji = getFileOperationEmoji(data.operation, data.status);
+            addLog(`${emoji} ${data.operation.toUpperCase()}: ${data.file_path} - ${data.status.toUpperCase()}`, 
+                   data.status === 'failed' ? 'error' : 'info');
+        });
+
+        socket.on('agent_complete', function(data) {
+            addLog('🎉 Agent execution completed successfully!', 'success');
+            addLog('📋 Final Summary:', 'info');
+            addLog(data.log, 'info');
+            startBtn.disabled = false;
+            startBtn.textContent = '🚀 Start Agent';
+            hideProgress();
+        });
+
+        socket.on('agent_error', function(data) {
+            addLog('💥 Agent execution failed: ' + data.error, 'error');
+            startBtn.disabled = false;
+            startBtn.textContent = '🚀 Start Agent';
+            hideProgress();
+        });
+
+        function updateConnectionStatus(connected) {
+            if (connected) {
+                connectionStatus.className = 'status connected';
+                connectionStatus.textContent = '🟢 Connected to server';
+            } else {
+                connectionStatus.className = 'status disconnected';
+                connectionStatus.textContent = '🔴 Disconnected from server';
+            }
+        }
+
+        function addLog(message, type = 'info', timestamp = null) {
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${type}`;
+            
+            const timeStr = timestamp || new Date().toISOString();
+            logEntry.innerHTML = `
+                <span class="timestamp">[${new Date(timeStr).toLocaleTimeString()}]</span> 
+                ${message}
+            `;
+            
+            logsContainer.appendChild(logEntry);
+            logsContainer.scrollTop = logsContainer.scrollHeight;
+        }
+
+        function updateProgress(data) {
+            showProgress();
+            progressText.textContent = `${data.step}: ${data.current}/${data.total} (${data.percentage}%)`;
+            progressFill.style.width = data.percentage + '%';
+        }
+
+        function showProgress() {
+            progressContainer.style.display = 'block';
+        }
+
+        function hideProgress() {
+            progressContainer.style.display = 'none';
+        }
+
+        function getFileOperationEmoji(operation, status) {
+            const emojis = {
+                'read': { 'started': '📖', 'completed': '✅', 'failed': '❌' },
+                'write': { 'started': '✍️', 'completed': '✅', 'failed': '❌' },
+                'create': { 'started': '📝', 'completed': '✅', 'failed': '❌' },
+                'patch': { 'started': '🔧', 'completed': '✅', 'failed': '❌' },
+                'lint': { 'started': '🔍', 'completed': '✅', 'failed': '❌' }
+            };
+            return emojis[operation]?.[status] || '📄';
+        }
+
+        function startAgent() {
+            const projectPath = document.getElementById('projectPath').value;
+            const sessionId = document.getElementById('sessionId').value;
+            const userInstructions = document.getElementById('userInstructions').value;
+
+            if (!projectPath || !sessionId) {
+                alert('Please enter both Project Path and Session ID');
+                return;
+            }
+
+            startBtn.disabled = true;
+            startBtn.textContent = '⏳ Running...';
+            
+            // Clear previous logs
+            logsContainer.innerHTML = '';
+            addLog('🚀 Starting new agent session...', 'info');
+
+            fetch('http://localhost:5000/fix', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    project_path: projectPath,
+                    session_id: sessionId,
+                    user_instructions: userInstructions
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                addLog('📡 Agent request sent successfully', 'success');
+            })
+            .catch(error => {
+                addLog('❌ Failed to send agent request: ' + error, 'error');
+                startBtn.disabled = false;
+                startBtn.textContent = '🚀 Start Agent';
+            });
+        }
+
+        // Auto-scroll to bottom when new logs arrive
+        const observer = new MutationObserver(function() {
+            logsContainer.scrollTop = logsContainer.scrollHeight;
+        });
+        observer.observe(logsContainer, { childList: true });
+    </script>
+</body>
+</html>

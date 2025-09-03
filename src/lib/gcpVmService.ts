@@ -544,7 +544,7 @@ EOF`);
 
   private convertBatToBash(batContent: string, projectPath: string, port: number): string {
     // Convert Windows batch commands to Linux bash
-    let bashContent = batContent
+    const bashContent = batContent
       .replace(/cd\s+/g, 'cd ')
       .replace(/npm\s+start/g, `PORT=${port} npm start`)
       .replace(/yarn\s+start/g, `PORT=${port} yarn start`)
@@ -893,6 +893,186 @@ ${bashContent}`;
       throw error;
     } finally {
       ssh.dispose();
+    }
+  }
+
+  /**
+   * Restart project in place without re-cloning (preserves agent changes)
+   */
+  async restartProjectInPlace(repoName: string, giteaUsername?: string): Promise<{ success: boolean, port?: number, error?: string }> {
+    try {
+      this.log(`🔄 Restarting project in place: ${repoName}`);
+      if (giteaUsername) {
+        this.log(`👤 For user: ${giteaUsername}`);
+      }
+
+      // Step 1: Stop the project
+      const stopResult = await this.stopProject(repoName, giteaUsername);
+      if (!stopResult) {
+        return { success: false, error: 'Failed to stop project' };
+      }
+
+      // Step 2: Wait a moment for cleanup
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Step 3: Get existing project configuration
+      const ssh = new NodeSSH();
+      await ssh.connect({
+        host: await this.getVmExternalIP(),
+        username: process.env.GCP_VM_USERNAME!,
+        privateKeyPath: process.env.GCP_VM_SSH_KEY_PATH!
+      });
+
+      const vmProjectPath = this.getVmProjectPath(repoName, giteaUsername);
+
+      // Check if project directory exists
+      const dirCheck = await ssh.execCommand(`test -d ${vmProjectPath} && echo "exists" || echo "missing"`);
+      if (dirCheck.stdout.trim() !== 'exists') {
+        ssh.dispose();
+        return { success: false, error: 'Project directory not found' };
+      }
+
+      // Step 4: Find available port for restart
+      const port = await this.findAvailablePort();
+      if (!port || port < 8000) {
+        ssh.dispose();
+        return { success: false, error: 'No available port found' };
+      }
+
+      // Step 5: Start the project using existing files
+      this.log(`🚀 Starting project on port ${port} using existing files...`);
+      
+      // Detect project type and start appropriately
+      const hasAppPy = await ssh.execCommand(`test -f ${vmProjectPath}/app.py && echo "yes" || echo "no"`);
+      const hasPackageJson = await ssh.execCommand(`test -f ${vmProjectPath}/package.json && echo "yes" || echo "no"`);
+
+      this.log(`🔍 Project type detection: app.py=${hasAppPy.stdout.trim()}, package.json=${hasPackageJson.stdout.trim()}`);
+
+      let startCommand: string;
+      
+      if (hasAppPy.stdout.trim() === 'yes') {
+        // Python/Flask project - use simple backgrounding with immediate return
+        startCommand = `cd ${vmProjectPath} && (FLASK_APP=app.py FLASK_ENV=development python3 -m flask run --host=0.0.0.0 --port=${port} > server.log 2>&1 & echo $! > server.pid) && sleep 1`;
+      } else if (hasPackageJson.stdout.trim() === 'yes') {
+        // Node.js project
+        startCommand = `cd ${vmProjectPath} && (PORT=${port} npm start > server.log 2>&1 & echo $! > server.pid) && sleep 1`;
+      } else {
+        // Generic approach
+        startCommand = `cd ${vmProjectPath} && (python3 -m http.server ${port} > server.log 2>&1 & echo $! > server.pid) && sleep 1`;
+      }
+
+      this.log(`🎯 Executing start command: ${startCommand}`);
+
+      // Add timeout to prevent hanging
+      const startResult = await Promise.race([
+        ssh.execCommand(startCommand),
+        new Promise<{ code: number; stdout: string; stderr: string }>((_, reject) => 
+          setTimeout(() => reject(new Error('Start command timeout')), 15000)
+        )
+      ]);
+      this.log(`📋 Start command result: exit code=${startResult.code}, stdout="${startResult.stdout}", stderr="${startResult.stderr}"`);
+      
+      // Step 6: Verify startup
+      this.log(`⏳ Waiting 3 seconds for process startup...`);
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      const pidCheck = await ssh.execCommand(`if [ -f ${vmProjectPath}/server.pid ]; then cat ${vmProjectPath}/server.pid; else echo "no-pid"; fi`);
+      this.log(`🔍 PID check result: "${pidCheck.stdout.trim()}"`);
+      
+      if (pidCheck.stdout.trim() === 'no-pid') {
+        // Let's check what files exist and any error logs
+        const dirContents = await ssh.execCommand(`ls -la ${vmProjectPath}/`);
+        const logCheck = await ssh.execCommand(`if [ -f ${vmProjectPath}/server.log ]; then tail -10 ${vmProjectPath}/server.log; else echo "no-log"; fi`);
+        this.log(`📂 Directory contents: ${dirContents.stdout}`);
+        this.log(`📜 Server log: ${logCheck.stdout}`);
+        
+        ssh.dispose();
+        return { success: false, error: 'Failed to start project - no PID file created' };
+      }
+
+      const pid = pidCheck.stdout.trim();
+      const processCheck = await ssh.execCommand(`ps -p ${pid} > /dev/null && echo "running" || echo "not-running"`);
+      this.log(`🔍 Process check for PID ${pid}: "${processCheck.stdout.trim()}"`);
+      
+      if (processCheck.stdout.trim() !== 'running') {
+        // Check if process died and why
+        const logCheck = await ssh.execCommand(`if [ -f ${vmProjectPath}/server.log ]; then tail -10 ${vmProjectPath}/server.log; else echo "no-log"; fi`);
+        this.log(`📜 Server log after failed start: ${logCheck.stdout}`);
+        
+        ssh.dispose();
+        return { success: false, error: 'Failed to start project - process not running' };
+      }
+
+      ssh.dispose();
+      
+      this.log(`✅ Project ${repoName} restarted successfully on port ${port} (PID: ${pid})`);
+      return { success: true, port };
+
+    } catch (error) {
+      this.log(`❌ Error restarting project in place: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
+  /**
+   * Restart existing project using repositoryId mapping (no cloning)
+   */
+  async restartExistingProject(repositoryId: string, giteaUsername?: string): Promise<{ success: boolean, port?: number, error?: string }> {
+    try {
+      this.log(`🔄 Restarting existing project: repositoryId=${repositoryId}`);
+      if (giteaUsername) {
+        this.log(`👤 For user: ${giteaUsername}`);
+      }
+
+      // Map repositoryId to actual project directory name
+      // The directory structure is: /home/area51_project_ibm/projects/{username}/{project-name}
+      // We need to find the existing project directory
+      
+      const ssh = new NodeSSH();
+      await ssh.connect({
+        host: await this.getVmExternalIP(),
+        username: process.env.GCP_VM_USERNAME!,
+        privateKeyPath: process.env.GCP_VM_SSH_KEY_PATH!
+      });
+
+      // Step 1: Find the project directory by listing existing projects for the user
+      const userProjectsPath = `/home/area51_project_ibm/projects/${giteaUsername}`;
+      const listCommand = `ls -la ${userProjectsPath} 2>/dev/null || echo "no-projects"`;
+      const listResult = await ssh.execCommand(listCommand);
+      
+      if (listResult.stdout.trim() === 'no-projects' || listResult.stdout.trim() === '') {
+        ssh.dispose();
+        return { success: false, error: 'No projects found for user' };
+      }
+
+      // Extract project names from the listing (remove . and .. entries)
+      const projectDirs = listResult.stdout
+        .split('\n')
+        .filter(line => line.includes('drwx'))
+        .map(line => line.split(/\s+/).pop())
+        .filter(name => name && name !== '.' && name !== '..');
+
+      this.log(`📁 Found project directories: ${projectDirs.join(', ')}`);
+
+      // For now, take the first project directory (or find by pattern)
+      // In a real implementation, you'd have a proper mapping
+      const projectName = projectDirs.find(name => name?.includes('basic-flask')) || projectDirs[0];
+      
+      if (!projectName) {
+        ssh.dispose();
+        return { success: false, error: 'No suitable project directory found' };
+      }
+
+      ssh.dispose();
+
+      this.log(`🎯 Using project directory: ${projectName}`);
+
+      // Step 2: Use the existing restart method with the found project name
+      return await this.restartProjectInPlace(projectName, giteaUsername);
+
+    } catch (error) {
+      this.log(`❌ Error restarting existing project: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
   }
 }

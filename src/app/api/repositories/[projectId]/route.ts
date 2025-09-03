@@ -2,9 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { userService } from "@/lib/userService";
 
+interface RouteParams {
+    params: Promise<{ projectId: string }>;
+}
+
 export async function DELETE(
     request: NextRequest,
-    { params }: { params: Promise<{ projectId: string }> | { projectId: string } }
+    { params }: RouteParams
 ) {
     try {
         // Check authentication
@@ -16,8 +20,8 @@ export async function DELETE(
             );
         }
 
-        // Handle both Promise and direct params for Next.js compatibility
-        const resolvedParams = await Promise.resolve(params);
+        // Resolve params
+        const resolvedParams = await params;
         const { projectId } = resolvedParams;
 
         if (!projectId) {

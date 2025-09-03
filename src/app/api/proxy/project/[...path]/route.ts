@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 
+interface RouteParams {
+     params: Promise<{ path: string[] }>;
+}
+
 export async function GET(
      request: NextRequest,
-     { params }: { params: { path: string[] } }
+     { params }: RouteParams
 ) {
      try {
           const session = await auth();
@@ -11,6 +15,7 @@ export async function GET(
                return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
           }
 
+          const resolvedParams = await params;
           const { searchParams } = new URL(request.url);
           const repositoryId = searchParams.get('repositoryId');
           const port = searchParams.get('port') || '3000';
@@ -41,7 +46,7 @@ export async function GET(
           }
 
           // Build the target URL
-          const pathString = params.path ? `/${params.path.join('/')}` : '/';
+          const pathString = resolvedParams.path ? `/${resolvedParams.path.join('/')}` : '/';
           const search = request.nextUrl.search || '';
           const targetUrl = `http://${statusData.vmIP}:${port}${pathString}${search}`;
 

@@ -25,13 +25,14 @@ export default function ProjectRunnerPage() {
   const repositoryId = params.repositoryId as string;
   const repositoryName = searchParams.get("name") || "Unknown Project";
   const vmIP = searchParams.get("vmIP");
-  const port = searchParams.get("port") || "3000";
+  const initialPort = searchParams.get("port") || "3000";
 
   const [projectStatus, setProjectStatus] = useState<ProjectStatus | null>(
     null
   );
   const [checkingStatus, setCheckingStatus] = useState(false);
   const [iframeSrc, setIframeSrc] = useState<string>("");
+  const [currentPort, setCurrentPort] = useState<string>(initialPort);
   
   // Use chat storage hook
   const {
@@ -147,11 +148,13 @@ export default function ProjectRunnerPage() {
   useEffect(() => {
     if (projectStatus?.isRunning && vmIP) {
       // Use a proxy URL to hide the actual VM IP
+      // Add timestamp to force refresh when port changes
+      const timestamp = Date.now();
       setIframeSrc(
-        `/api/proxy/project?repositoryId=${repositoryId}&port=${port}`
+        `/api/proxy/project?repositoryId=${repositoryId}&port=${currentPort}&_t=${timestamp}`
       );
     }
-  }, [projectStatus, vmIP, port, repositoryId]);
+  }, [projectStatus, vmIP, currentPort, repositoryId]);
 
   const checkProjectStatus = async () => {
     if (!repositoryId) return;
@@ -174,6 +177,11 @@ export default function ProjectRunnerPage() {
           pid: data.pid,
           projectUrl: data.projectUrl,
         });
+        
+        // Update current port if provided by the API
+        if (data.port) {
+          setCurrentPort(data.port.toString());
+        }
       }
     } catch (error) {
       console.error("Error checking project status:", error);
@@ -232,6 +240,12 @@ export default function ProjectRunnerPage() {
 
       if (restartResponse.ok) {
         const restartData = await restartResponse.json();
+        
+        // Update the current port with the new port from restart
+        if (restartData.port) {
+          setCurrentPort(restartData.port.toString());
+          console.log(`🔄 Updated current port to: ${restartData.port}`);
+        }
         
         // Step 4: Check new project status
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -789,7 +803,7 @@ Your chats are automatically saved to your browser's local storage.`);
             ) : projectStatus?.isRunning && vmIP ? (
               <div className="h-full bg-white rounded-lg shadow-lg overflow-hidden">
                 <iframe
-                  src={`http://${vmIP}:${port}`}
+                  src={`http://${vmIP}:${currentPort}?_t=${Date.now()}`}
                   className="w-full h-full border-0"
                   title={`${repositoryName} Preview`}
                   sandbox="allow-same-origin allow-scripts allow-forms allow-navigation"

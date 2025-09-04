@@ -920,7 +920,10 @@ ${bashContent}`;
       await ssh.connect({
         host: await this.getVmExternalIP(),
         username: process.env.GCP_VM_USERNAME!,
-        privateKeyPath: process.env.GCP_VM_SSH_KEY_PATH!
+        privateKeyPath: process.env.GCP_VM_SSH_KEY_PATH!,
+        readyTimeout: 20000,
+        keepaliveInterval: 5000,
+        keepaliveCountMax: 3
       });
 
       const vmProjectPath = this.getVmProjectPath(repoName, giteaUsername);
@@ -947,12 +950,55 @@ ${bashContent}`;
       const hasPackageJson = await ssh.execCommand(`test -f ${vmProjectPath}/package.json && echo "yes" || echo "no"`);
 
       this.log(`🔍 Project type detection: app.py=${hasAppPy.stdout.trim()}, package.json=${hasPackageJson.stdout.trim()}`);
-
-      let startCommand: string;
+      
+      // Pre-check: Ensure Flask is available for Python projects
+      if (hasAppPy.stdout.trim() === 'yes') {
+        const flaskCheck = await ssh.execCommand(`python3 -c "import flask; print('Flask available')" 2>/dev/null || echo "Flask not found"`);
+        this.log(`🐍 Flask availability: ${flaskCheck.stdout.trim()}`);
+        
+        if (flaskCheck.stdout.trim() === 'Flask not found') {
+          this.log('📦 Installing Flask...');
+          const installResult = await ssh.execCommand(`python3 -m pip install --user flask`, { cwd: vmProjectPath });
+          this.log(`📦 Flask installation: ${installResult.stdout}`);
+        }
+      }      let startCommand: string;
       
       if (hasAppPy.stdout.trim() === 'yes') {
-        // Python/Flask project
-        startCommand = `cd ${vmProjectPath} && FLASK_APP=app.py FLASK_ENV=development FLASK_RUN_PORT=${port} FLASK_RUN_HOST=0.0.0.0 PYTHONUNBUFFERED=1 python3 -m flask run --host=0.0.0.0 --port=${port} > server.log 2>&1 & echo $! > server.pid`;
+        // Python/Flask project - use a startup script for better PID handling
+        const startupScript = `#!/bin/bash
+cd ${vmProjectPath}
+export FLASK_APP=app.py
+export FLASK_ENV=development
+export FLASK_RUN_PORT=${port}
+export FLASK_RUN_HOST=0.0.0.0
+export PYTHONUNBUFFERED=1
+
+# Kill any existing process on this port
+pkill -f "flask.*${port}" 2>/dev/null || true
+sleep 1
+
+# Start Flask and capture PID
+python3 -m flask run --host=0.0.0.0 --port=${port} > server.log 2>&1 &
+FLASK_PID=$!
+echo $FLASK_PID > server.pid
+echo "Started Flask with PID: $FLASK_PID"
+
+# Verify the process started
+sleep 1
+if ps -p $FLASK_PID > /dev/null; then
+  echo "Flask process verified running"
+else
+  echo "Flask process failed to start"
+  exit 1
+fi`;
+
+        // Write the startup script to the VM
+        await ssh.execCommand(`cat > ${vmProjectPath}/restart_flask.sh << 'EOF'
+${startupScript}
+EOF`);
+        await ssh.execCommand(`chmod +x ${vmProjectPath}/restart_flask.sh`);
+        
+        startCommand = `${vmProjectPath}/restart_flask.sh`;
       } else if (hasPackageJson.stdout.trim() === 'yes') {
         // Node.js project
         startCommand = `cd ${vmProjectPath} && PORT=${port} npm start > server.log 2>&1 & echo $! > server.pid`;
@@ -963,31 +1009,67 @@ ${bashContent}`;
 
       this.log(`🎯 Executing start command: ${startCommand}`);
 
-      // Add timeout to prevent hanging
+      // Add timeout to prevent hanging (increased to 30 seconds)
       const startResult = await Promise.race([
-        ssh.execCommand(startCommand),
+        ssh.execCommand(startCommand, { 
+          execOptions: { 
+            pty: false 
+          }
+        }),
         new Promise<{ code: number; stdout: string; stderr: string }>((_, reject) => 
-          setTimeout(() => reject(new Error('Start command timeout')), 15000)
+          setTimeout(() => reject(new Error('Start command timeout')), 30000)
         )
       ]);
       this.log(`📋 Start command result: exit code=${startResult.code}, stdout="${startResult.stdout}", stderr="${startResult.stderr}"`);
       
+      // Check if the command failed immediately
+      if (startResult.code !== 0) {
+        this.log(`❌ Start command failed with exit code ${startResult.code}`);
+        this.log(`📜 Error output: ${startResult.stderr}`);
+        ssh.dispose();
+        return { success: false, error: `Start command failed: ${startResult.stderr || 'Unknown error'}` };
+      }
+      
       // Step 6: Verify startup
-      this.log(`⏳ Waiting 3 seconds for process startup...`);
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      this.log(`⏳ Waiting 5 seconds for process startup...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
       
       const pidCheck = await ssh.execCommand(`if [ -f ${vmProjectPath}/server.pid ]; then cat ${vmProjectPath}/server.pid; else echo "no-pid"; fi`);
       this.log(`🔍 PID check result: "${pidCheck.stdout.trim()}"`);
       
       if (pidCheck.stdout.trim() === 'no-pid') {
+        // Fallback: Check if Flask is actually running on the port even without PID file
+        this.log(`🔍 No PID file found, checking if Flask is running on port ${port}...`);
+        const portCheck = await ssh.execCommand(`netstat -tlnp 2>/dev/null | grep ":${port}" || echo "port-not-in-use"`);
+        const processCheck = await ssh.execCommand(`ps aux | grep "flask.*${port}" | grep -v grep || echo "process-not-found"`);
+        
+        this.log(`🔍 Port ${port} status: ${portCheck.stdout}`);
+        this.log(`🔍 Flask process check: ${processCheck.stdout}`);
+        
+        // If we find Flask running on the port, extract the PID and create the PID file
+        if (portCheck.stdout.includes(':' + port) && !processCheck.stdout.includes('process-not-found')) {
+          const pidMatch = processCheck.stdout.match(/\s+(\d+)\s+/);
+          if (pidMatch && pidMatch[1]) {
+            const detectedPid = pidMatch[1];
+            this.log(`🎯 Detected running Flask process with PID: ${detectedPid}`);
+            await ssh.execCommand(`echo ${detectedPid} > ${vmProjectPath}/server.pid`);
+            this.log(`✅ Created PID file with detected PID: ${detectedPid}`);
+            
+            ssh.dispose();
+            this.log(`✅ Project ${repoName} restarted successfully on port ${port} (PID: ${detectedPid})`);
+            return { success: true, port };
+          }
+        }
+        
         // Let's check what files exist and any error logs
         const dirContents = await ssh.execCommand(`ls -la ${vmProjectPath}/`);
-        const logCheck = await ssh.execCommand(`if [ -f ${vmProjectPath}/server.log ]; then tail -10 ${vmProjectPath}/server.log; else echo "no-log"; fi`);
+        const logCheck = await ssh.execCommand(`if [ -f ${vmProjectPath}/server.log ]; then tail -20 ${vmProjectPath}/server.log; else echo "no-log"; fi`);
+        
         this.log(`📂 Directory contents: ${dirContents.stdout}`);
         this.log(`📜 Server log: ${logCheck.stdout}`);
         
         ssh.dispose();
-        return { success: false, error: 'Failed to start project - no PID file created' };
+        return { success: false, error: 'Failed to start project - no PID file created and no running process detected' };
       }
 
       const pid = pidCheck.stdout.trim();
@@ -996,8 +1078,11 @@ ${bashContent}`;
       
       if (processCheck.stdout.trim() !== 'running') {
         // Check if process died and why
-        const logCheck = await ssh.execCommand(`if [ -f ${vmProjectPath}/server.log ]; then tail -10 ${vmProjectPath}/server.log; else echo "no-log"; fi`);
+        const logCheck = await ssh.execCommand(`if [ -f ${vmProjectPath}/server.log ]; then tail -20 ${vmProjectPath}/server.log; else echo "no-log"; fi`);
+        const portCheck = await ssh.execCommand(`netstat -tlnp 2>/dev/null | grep ":${port}" || echo "port-not-in-use"`);
+        
         this.log(`📜 Server log after failed start: ${logCheck.stdout}`);
+        this.log(`🔍 Port ${port} status: ${portCheck.stdout}`);
         
         ssh.dispose();
         return { success: false, error: 'Failed to start project - process not running' };
@@ -1010,6 +1095,15 @@ ${bashContent}`;
 
     } catch (error) {
       this.log(`❌ Error restarting project in place: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      
+      // Check if it's a timeout error and provide more specific guidance
+      if (error instanceof Error && error.message.includes('timeout')) {
+        return { 
+          success: false, 
+          error: `Restart timeout: ${error.message}. This may indicate the Flask server is taking too long to start or there are dependency issues.` 
+        };
+      }
+      
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
   }
@@ -1032,7 +1126,10 @@ ${bashContent}`;
       await ssh.connect({
         host: await this.getVmExternalIP(),
         username: process.env.GCP_VM_USERNAME!,
-        privateKeyPath: process.env.GCP_VM_SSH_KEY_PATH!
+        privateKeyPath: process.env.GCP_VM_SSH_KEY_PATH!,
+        readyTimeout: 20000,
+        keepaliveInterval: 5000,
+        keepaliveCountMax: 3
       });
 
       // Step 1: Find the project directory by listing existing projects for the user

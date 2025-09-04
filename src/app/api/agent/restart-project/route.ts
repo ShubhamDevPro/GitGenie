@@ -36,11 +36,11 @@ export async function POST(request: NextRequest) {
     console.log(`🔄 Restarting project in place: repositoryId=${repositoryId} for user: ${giteaUsername}`);
     
     // Use the new restart method that directly restarts existing project on VM
-    // Add timeout to prevent API hanging
+    // Add timeout to prevent API hanging (increased to 60 seconds)
     const result = await Promise.race([
       gcpVmService.restartExistingProject(repositoryId, giteaUsername),
       new Promise<{ success: false; error: string }>((resolve) => 
-        setTimeout(() => resolve({ success: false, error: 'Restart operation timeout' }), 30000)
+        setTimeout(() => resolve({ success: false, error: 'Restart operation timeout' }), 60000)
       )
     ]);
     

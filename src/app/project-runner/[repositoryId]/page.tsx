@@ -11,6 +11,7 @@ interface ProjectStatus {
   isRunning: boolean;
   pid?: string;
   projectUrl?: string;
+  port?: number; // Add port to interface
 }
 
 export default function ProjectRunnerPage() {
@@ -44,6 +45,7 @@ export default function ProjectRunnerPage() {
   const [newMessage, setNewMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [projectContextLoaded, setProjectContextLoaded] = useState(false);
+  const [isRerunning, setIsRerunning] = useState(false);
 
   const [chatContainerRef, setChatContainerRef] = useState<HTMLDivElement | null>(null);
 
@@ -103,9 +105,11 @@ export default function ProjectRunnerPage() {
   // Set iframe source based on project status
   useEffect(() => {
     if (projectStatus?.isRunning && vmIP) {
+      // Use the current port from project status, fallback to URL parameter
+      const currentPort = projectStatus.port || port;
       // Use a proxy URL to hide the actual VM IP
       setIframeSrc(
-        `/api/proxy/project?repositoryId=${repositoryId}&port=${port}`
+        `/api/proxy/project?repositoryId=${repositoryId}&port=${currentPort}`
       );
     }
   }, [projectStatus, vmIP, port, repositoryId]);
@@ -130,6 +134,7 @@ export default function ProjectRunnerPage() {
           isRunning: data.isRunning,
           pid: data.pid,
           projectUrl: data.projectUrl,
+          port: data.port, // Capture the current port
         });
       }
     } catch (error) {
@@ -157,6 +162,80 @@ export default function ProjectRunnerPage() {
       }
     } catch (error) {
       console.error("Error stopping project:", error);
+    }
+  };
+
+  const rerunProject = async () => {
+    if (!repositoryId || isRerunning) return;
+
+    setIsRerunning(true);
+
+    // Add rerun message to chat
+    const rerunMessage: ChatMessage = {
+      id: Date.now().toString(),
+      text: "🔄 Starting project re-run. This will use the existing project files with any changes made by the AI agent...",
+      sender: "bot",
+      timestamp: new Date(),
+    };
+    addMessage(rerunMessage);
+
+    try {
+      const response = await fetch("/api/agent/rerun-project", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ 
+          repositoryId: repositoryId,
+          useGCPVM: vmIP ? true : false // Use GCP VM if we have a VM IP
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Update project status to get new port info
+        await checkProjectStatus();
+        
+        // Refresh iframe to show changes - wait for status update
+        setTimeout(() => {
+          if (iframeSrc) {
+            // Force iframe reload by updating src with timestamp
+            const currentPort = projectStatus?.port || port;
+            const urlWithTimestamp = `/api/proxy/project?repositoryId=${repositoryId}&port=${currentPort}&t=${Date.now()}`;
+            setIframeSrc(''); // Clear first
+            setTimeout(() => setIframeSrc(urlWithTimestamp), 100); // Then reload with timestamp
+          }
+        }, 500); // Wait for checkProjectStatus to complete
+
+        const successMessage: ChatMessage = {
+          id: (Date.now() + 1).toString(),
+          text: `✅ Project re-run completed successfully! ${data.message || 'The project has been restarted with your changes.'} ${data.port ? `Running on port ${data.port}.` : ''}`,
+          sender: "bot",
+          timestamp: new Date(),
+        };
+        addMessage(successMessage);
+      } else {
+        const errorData = await response.json();
+        const errorMessage: ChatMessage = {
+          id: (Date.now() + 1).toString(),
+          text: `❌ Re-run failed: ${errorData.error || 'Unknown error'}. Please try using the "Launch Project with AI" button from the repositories page.`,
+          sender: "bot",
+          timestamp: new Date(),
+        };
+        addMessage(errorMessage);
+      }
+    } catch (error) {
+      console.error("Error re-running project:", error);
+      const errorMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        text: "❌ Re-run failed due to connection issues. Please check your internet connection and try again.",
+        sender: "bot",
+        timestamp: new Date(),
+      };
+      addMessage(errorMessage);
+    } finally {
+      setIsRerunning(false);
     }
   };
 
@@ -350,6 +429,22 @@ export default function ProjectRunnerPage() {
                   </>
                 ) : (
                   "🔄 Refresh"
+                )}
+              </button>
+
+              <button
+                onClick={rerunProject}
+                disabled={isRerunning}
+                className="px-3 py-1 text-sm bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-300 rounded hover:bg-green-200 dark:hover:bg-green-900/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Re-run project with current changes"
+              >
+                {isRerunning ? (
+                  <>
+                    <span className="inline-block w-3 h-3 border border-green-600 border-t-transparent rounded-full animate-spin mr-1"></span>
+                    Re-running...
+                  </>
+                ) : (
+                  "🚀 Re-run"
                 )}
               </button>
 

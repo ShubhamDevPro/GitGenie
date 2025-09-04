@@ -1037,15 +1037,20 @@ ${bashContent}`;
 CRITICAL REQUIREMENTS:
 1. Use development commands (npm run dev, npm start) - NEVER npm run build
 2. Target is Ubuntu Linux VM (not Windows)
-3. Include proper environment variables for port binding
-4. Return ONLY executable bash commands, one per line
-5. Skip npm install if not necessary (assume dependencies might be installed)
-6. Ensure commands bind to 0.0.0.0 (not localhost) for external access
-7. Focus on RESTART commands, not initial setup
+3. ALWAYS include: export HOST=0.0.0.0 for external access
+4. ALWAYS include: export PORT=${availablePort}
+5. Return ONLY executable bash commands, one per line
+6. Skip npm install if not necessary (assume dependencies might be installed)
+7. Ensure commands bind to 0.0.0.0 (not localhost) for external access
+8. Focus on RESTART commands, not initial setup
+9. For Next.js: use npm run dev -- --hostname 0.0.0.0
+10. For React: use HOST=0.0.0.0 npm start
+11. For Node.js: ensure server binds to 0.0.0.0
 
 Example output format:
 npm install
 export PORT=${availablePort}
+export HOST=0.0.0.0
 npm run dev
 
 Do NOT include explanations, comments, or invalid commands.`
@@ -1078,7 +1083,7 @@ Do NOT include explanations, comments, or invalid commands.`
             'npm install',
             `export PORT=${availablePort}`,
             `export HOST=0.0.0.0`,
-            'npm run dev || npm start'
+            'npm run dev -- --hostname 0.0.0.0 || HOST=0.0.0.0 npm start'
           ];
         }
       } else if (requirementsTxtExists.stdout.trim() === 'exists' || appPyExists.stdout.trim() === 'exists' || mainPyExists.stdout.trim() === 'exists') {
@@ -1134,13 +1139,15 @@ Do NOT include explanations, comments, or invalid commands.`
             'npm install',
             `export PORT=${availablePort}`,
             `export HOST=0.0.0.0`,
-            'npm run dev || npm start'
+            'npm run dev -- --hostname 0.0.0.0 || HOST=0.0.0.0 npm start'
           ];
         } else if (files.some((f: string) => f.includes('.py'))) {
           commands = [
             'python3 -m pip install --user flask',
             `export FLASK_APP=app.py`,
             `export FLASK_ENV=development`,
+            `export FLASK_RUN_PORT=${availablePort}`,
+            `export FLASK_RUN_HOST=0.0.0.0`,
             `python3 -m flask run --host=0.0.0.0 --port=${availablePort}`
           ];
         } else {
@@ -1177,10 +1184,11 @@ Do NOT include explanations, comments, or invalid commands.`
       if (startCommand) {
         this.log(`🚀 Starting server in background: ${startCommand}`);
 
-        // Create restart script
+        // Create restart script with proper host binding
         const restartScript = `#!/bin/bash
 cd ${vmProjectPath}
 export PORT=${availablePort}
+export HOST=0.0.0.0
 
 # Start the new server in background with proper logging
 nohup ${startCommand} > server.log 2>&1 &

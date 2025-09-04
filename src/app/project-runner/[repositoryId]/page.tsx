@@ -160,35 +160,29 @@ export default function ProjectRunnerPage() {
     }
   };
 
-  const sendMessage = async () => {
-    if (!newMessage.trim() || isLoading) return;
+    const sendMessage = async (text: string) => {
+    if (!text.trim()) return;
 
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
-      text: newMessage,
+      text,
       sender: "user",
       timestamp: new Date(),
     };
 
-    // Add user message to storage
     addMessage(userMessage);
-    setNewMessage("");
+    setNewMessage(""); // Clear input after sending
     setIsLoading(true);
 
     try {
-      const response = await fetch('/api/agent/chat', {
-        method: 'POST',
+      const response = await fetch("/api/agent/chat", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          repositoryId,
-          message: newMessage,
-          conversationHistory: chatMessages.map(msg => ({
-            sender: msg.sender,
-            text: msg.text,
-            timestamp: msg.timestamp.toISOString()
-          }))
+        body: JSON.stringify({ 
+          message: text,
+          repositoryId: repositoryId
         }),
       });
 
@@ -201,6 +195,57 @@ export default function ProjectRunnerPage() {
           timestamp: new Date(),
         };
         addMessage(botMessage);
+
+        // Check if code was modified and trigger auto re-run
+        if (data.codeModified && repositoryId) {
+          const rerunMessage: ChatMessage = {
+            id: (Date.now() + 2).toString(),
+            text: "🔄 Code changes detected. Automatically re-running the project...",
+            sender: "bot",
+            timestamp: new Date(),
+          };
+          addMessage(rerunMessage);
+
+          // Trigger auto re-run
+          try {
+            const rerunResponse = await fetch("/api/agent/rerun-project", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ repositoryId: repositoryId }),
+            });
+
+            if (rerunResponse.ok) {
+              const rerunData = await rerunResponse.json();
+              const successMessage: ChatMessage = {
+                id: (Date.now() + 3).toString(),
+                text: `✅ Project re-run completed successfully! The changes have been applied and the project is running.`,
+                sender: "bot",
+                timestamp: new Date(),
+              };
+              addMessage(successMessage);
+            } else {
+              const rerunError = await rerunResponse.json();
+              const errorMessage: ChatMessage = {
+                id: (Date.now() + 3).toString(),
+                text: `❌ Auto re-run failed: ${rerunError.error || 'Unknown error'}. You may need to manually restart the project.`,
+                sender: "bot",
+                timestamp: new Date(),
+              };
+              addMessage(errorMessage);
+            }
+          } catch (rerunError) {
+            console.error("Error during auto re-run:", rerunError);
+            const errorMessage: ChatMessage = {
+              id: (Date.now() + 3).toString(),
+              text: "❌ Auto re-run failed due to connection issues. You may need to manually restart the project.",
+              sender: "bot",
+              timestamp: new Date(),
+            };
+            addMessage(errorMessage);
+          }
+        }
       } else {
         const errorData = await response.json();
         const errorMessage: ChatMessage = {
@@ -481,13 +526,13 @@ Your chats are automatically saved to your browser's local storage.`);
                 type="text"
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
-                onKeyPress={(e) => e.key === "Enter" && sendMessage()}
+                onKeyPress={(e) => e.key === "Enter" && sendMessage(newMessage)}
                 placeholder="Ask about your code, structure, bugs, or improvements..."
                 className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={isLoading || !chatLoaded}
               />
               <button
-                onClick={sendMessage}
+                onClick={() => sendMessage(newMessage)}
                 disabled={!newMessage.trim() || isLoading || !chatLoaded}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >

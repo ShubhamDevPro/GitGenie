@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { geminiService, ChatMessage, ProjectContext } from '@/lib/geminiService';
+import { openaiAgentService, OpenAIAgentService } from '@/lib/openaiAgentService';
 import { userService } from '@/lib/userService';
 import prisma from '@/lib/prisma';
 
@@ -67,6 +68,64 @@ export async function POST(request: NextRequest) {
         details: error instanceof Error ? error.message : 'Unknown error'
       }, { status: 500 });
     }
+
+    // Check if user is requesting code modifications
+    const isCodeModification = OpenAIAgentService.isCodeModificationRequest(message);
+    
+    if (isCodeModification) {
+      console.log('🤖 Code modification detected, using OpenAI Agent');
+      
+      // Use OpenAI Agent for code modifications
+      try {
+        const modificationResult = await openaiAgentService.modifyProjectCode({
+          instruction: message,
+          projectPath: projectContext.projectPath,
+          giteaUsername
+        });
+
+        if (modificationResult.success) {
+          // Return success response with modification details
+          return NextResponse.json({
+            success: true,
+            response: `✅ **Code modifications completed!**\n\n${modificationResult.changes}\n\n📝 **Files modified:** ${modificationResult.filesModified.length}\n${modificationResult.filesModified.map(f => `• ${f.split('/').pop()}`).join('\n')}\n\n🔄 The project will be automatically restarted to apply your changes.`,
+            projectInfo: {
+              name: projectContext.projectName,
+              path: projectContext.projectPath,
+              filesCount: projectContext.files.length,
+              hasPackageJson: !!projectContext.packageJson,
+              hasReadme: !!projectContext.readme
+            },
+            isCodeModification: true,
+            modificationResult
+          });
+        } else {
+          // Return error response
+          return NextResponse.json({
+            success: false,
+            response: `❌ **Failed to apply code modifications**\n\nError: ${modificationResult.error}\n\nPlease try rephrasing your request or be more specific about what you'd like to change.`,
+            projectInfo: {
+              name: projectContext.projectName,
+              path: projectContext.projectPath,
+              filesCount: projectContext.files.length,
+              hasPackageJson: !!projectContext.packageJson,
+              hasReadme: !!projectContext.readme
+            },
+            isCodeModification: true,
+            error: modificationResult.error
+          });
+        }
+      } catch (error) {
+        console.error('Error in OpenAI Agent code modification:', error);
+        return NextResponse.json({
+          success: false,
+          response: `❌ **OpenAI Agent Error**\n\nFailed to process code modification request: ${error instanceof Error ? error.message : 'Unknown error'}\n\nFalling back to chat response...`,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }, { status: 500 });
+      }
+    }
+
+    // Continue with regular Gemini chat for non-code-modification requests
+    console.log('💬 Regular chat detected, using Gemini');
 
     // Prepare conversation messages
     const messages: ChatMessage[] = [

@@ -1,8 +1,16 @@
-import { NodeSSH } from 'node-ssh';
 import { OpenAI } from 'openai';
 import { VMProjectResult, ProjectAnalysis } from '@/types/gcp';
 import * as fs from 'fs';
 import * as path from 'path';
+
+// Dynamically import node-ssh only on server side
+const getNodeSSH = async () => {
+  if (typeof window !== 'undefined') {
+    throw new Error('SSH operations are only available on the server side');
+  }
+  const { NodeSSH } = await import('node-ssh');
+  return NodeSSH;
+};
 
 export class GCPVmService {
   private openai: OpenAI;
@@ -46,6 +54,7 @@ export class GCPVmService {
   }
 
   async findAvailablePort(): Promise<number> {
+    const NodeSSH = await getNodeSSH();
     const ssh = new NodeSSH();
 
     try {
@@ -81,18 +90,34 @@ export class GCPVmService {
   }
 
   async testVMConnection(): Promise<{ success: boolean; error?: string; port?: number }> {
+    const NodeSSH = await getNodeSSH();
+    const ssh = new NodeSSH();
     try {
       this.log('🔍 Testing VM connection...');
+      
+      await ssh.connect({
+        host: await this.getVmExternalIP(),
+        username: process.env.GCP_VM_USERNAME!,
+        privateKeyPath: process.env.GCP_VM_SSH_KEY_PATH!
+      });
+
+      this.log('✅ VM connection successful');
+      
+      // Test finding an available port
       const port = await this.findAvailablePort();
-      this.log('✅ VM connection test successful!');
-      return { success: true, port };
+      
+      return {
+        success: true,
+        port
+      };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.log(`❌ VM connection test failed: ${errorMessage}`);
+      this.log(`❌ VM connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       return {
         success: false,
-        error: errorMessage
+        error: error instanceof Error ? error.message : 'Unknown error'
       };
+    } finally {
+      ssh.dispose();
     }
   }
 
@@ -168,6 +193,7 @@ npm run dev`
   }
 
   async runProjectOnVM(repositoryId: string, repoName: string, userProjectPath: string, giteaUsername?: string): Promise<VMProjectResult> {
+    const NodeSSH = await getNodeSSH();
     const ssh = new NodeSSH();
 
     try {
@@ -203,7 +229,7 @@ npm run dev`
       await ssh.putDirectory(userProjectPath, vmProjectPath, {
         recursive: true,
         concurrency: 10,
-        validate: function (itemPath) {
+        validate: function (itemPath: string) {
           const baseName = path.basename(itemPath);
           return !baseName.startsWith('.') && baseName !== 'node_modules';
         }
@@ -564,6 +590,7 @@ ${bashContent}`;
   }
 
   async checkProjectStatus(repoName: string, giteaUsername?: string): Promise<{ isRunning: boolean; pid?: string; port?: number }> {
+    const NodeSSH = await getNodeSSH();
     const ssh = new NodeSSH();
 
     try {
@@ -626,6 +653,7 @@ ${bashContent}`;
   }
 
   async getProjectLogs(repoName: string, giteaUsername?: string): Promise<string> {
+    const NodeSSH = await getNodeSSH();
     const ssh = new NodeSSH();
 
     try {
@@ -655,6 +683,7 @@ ${bashContent}`;
   }
 
   async stopProject(repoName: string, giteaUsername?: string): Promise<boolean> {
+    const NodeSSH = await getNodeSSH();
     const ssh = new NodeSSH();
 
     try {
@@ -715,6 +744,7 @@ ${bashContent}`;
       lastModified?: string;
     }>;
   }> {
+    const NodeSSH = await getNodeSSH();
     const ssh = new NodeSSH();
 
     try {
@@ -752,7 +782,7 @@ ${bashContent}`;
         };
       }
 
-      const projectNames = listResult.stdout.trim().split('\n').filter(name => name && name !== '.' && name !== '..');
+      const projectNames = listResult.stdout.trim().split('\n').filter((name: string) => name && name !== '.' && name !== '..');
       const projects = [];
 
       for (const projectName of projectNames) {
@@ -811,6 +841,7 @@ ${bashContent}`;
       lastModified?: string;
     }>;
   }>> {
+    const NodeSSH = await getNodeSSH();
     const ssh = new NodeSSH();
 
     try {
@@ -840,7 +871,7 @@ ${bashContent}`;
         return [];
       }
 
-      const entries = listResult.stdout.trim().split('\n').filter(name => name && name !== '.' && name !== '..');
+      const entries = listResult.stdout.trim().split('\n').filter((name: string) => name && name !== '.' && name !== '..');
       const allProjects = [];
 
       for (const entry of entries) {
@@ -893,6 +924,328 @@ ${bashContent}`;
       throw error;
     } finally {
       ssh.dispose();
+    }
+  }
+
+  /**
+   * Re-run an existing project on VM using existing files (preserves agent modifications)
+   * This method does NOT clone from Gitea, it uses the existing project files on the VM
+   * @param repositoryId - Repository ID
+   * @param repoName - Repository name
+   * @param giteaUsername - Gitea username for project path construction
+   * @returns VMProjectResult
+   */
+  async rerunExistingProject(repositoryId: string, repoName: string, giteaUsername: string): Promise<VMProjectResult> {
+    const NodeSSH = await getNodeSSH();
+    const ssh = new NodeSSH();
+
+    try {
+      this.log(`🔄 Re-running existing project: ${repoName}`);
+      this.log(`👤 For user: ${giteaUsername}`);
+      this.log(`⚠️ Using existing files on VM (preserving agent modifications)`);
+
+      this.log('🔍 Connecting to VM...');
+      await ssh.connect({
+        host: await this.getVmExternalIP(),
+        username: process.env.GCP_VM_USERNAME!,
+        privateKeyPath: process.env.GCP_VM_SSH_KEY_PATH!
+      });
+      this.log('✅ Connected to VM successfully');
+
+      // Get the existing VM project path
+      const vmProjectPath = this.getVmProjectPath(repoName, giteaUsername);
+      this.log(`📁 Using existing VM project path: ${vmProjectPath}`);
+
+      // Check if the project directory exists
+      const projectExistsCheck = await ssh.execCommand(`test -d ${vmProjectPath} && echo "exists" || echo "not_found"`);
+      
+      if (projectExistsCheck.stdout.trim() === 'not_found') {
+        throw new Error(`Project directory not found on VM: ${vmProjectPath}`);
+      }
+
+      this.log('✅ Found existing project directory on VM');
+
+      // Stop any existing process first
+      this.log('🛑 Stopping any existing process...');
+      const pidResult = await ssh.execCommand(`if [ -f ${vmProjectPath}/server.pid ]; then cat ${vmProjectPath}/server.pid; else echo "no-pid"; fi`);
+
+      if (pidResult.stdout.trim() !== 'no-pid') {
+        const pid = pidResult.stdout.trim();
+        this.log(`🔍 Found existing process with PID: ${pid}`);
+        
+        const killResult = await ssh.execCommand(`kill ${pid} && echo "killed" || echo "failed"`);
+        if (killResult.stdout.trim() === 'killed') {
+          this.log(`✅ Stopped existing process (PID: ${pid})`);
+          await ssh.execCommand(`rm -f ${vmProjectPath}/server.pid`);
+        } else {
+          this.log(`⚠️ Could not stop existing process, continuing anyway`);
+        }
+      } else {
+        this.log('📄 No existing process found');
+      }
+
+      // Find available port
+      this.log('🔍 Finding available port...');
+      const availablePort = await this.findAvailablePort();
+      this.log(`✅ Using port: ${availablePort}`);
+
+      // Analyze the existing project structure on VM to determine project type
+      this.log('📖 Analyzing existing project structure on VM...');
+      
+      const fileListResult = await ssh.execCommand(`ls -la ${vmProjectPath}`, { cwd: vmProjectPath });
+      this.log(`📄 Files in project directory: ${fileListResult.stdout}`);
+
+      let commands: string[] = [];
+      let projectType = 'unknown';
+
+      // Check for different project types on VM
+      const packageJsonExists = await ssh.execCommand(`test -f ${vmProjectPath}/package.json && echo "exists" || echo "not_found"`);
+      const requirementsTxtExists = await ssh.execCommand(`test -f ${vmProjectPath}/requirements.txt && echo "exists" || echo "not_found"`);
+      const appPyExists = await ssh.execCommand(`test -f ${vmProjectPath}/app.py && echo "exists" || echo "not_found"`);
+      const mainPyExists = await ssh.execCommand(`test -f ${vmProjectPath}/main.py && echo "exists" || echo "not_found"`);
+      const startShExists = await ssh.execCommand(`test -f ${vmProjectPath}/start.sh && echo "exists" || echo "not_found"`);
+
+      if (startShExists.stdout.trim() === 'exists') {
+        // Use existing start.sh script
+        this.log('✅ Found existing start.sh, using direct execution');
+        projectType = 'custom';
+        commands = [
+          `export PORT=${availablePort}`,
+          `export HOST=0.0.0.0`,
+          'chmod +x start.sh',
+          './start.sh'
+        ];
+      } else if (packageJsonExists.stdout.trim() === 'exists') {
+        // Node.js project
+        projectType = 'nodejs';
+        this.log('🟢 Detected Node.js project (package.json found on VM)');
+
+        // Read package.json from VM to understand the project
+        const packageJsonResult = await ssh.execCommand(`cat ${vmProjectPath}/package.json`);
+        
+        try {
+          const packageJson = JSON.parse(packageJsonResult.stdout);
+          this.log('🤖 Using AI to generate deployment commands for existing project...');
+          
+          const openaiResponse = await this.openai.chat.completions.create({
+            model: "gpt-4",
+            messages: [
+              {
+                role: "system",
+                content: `You are an expert DevOps assistant for Ubuntu Linux servers. Given a package.json file from an EXISTING project on a VM, generate ONLY the essential Linux bash commands to restart this project in development mode on port ${availablePort}.
+
+CRITICAL REQUIREMENTS:
+1. Use development commands (npm run dev, npm start) - NEVER npm run build
+2. Target is Ubuntu Linux VM (not Windows)
+3. Include proper environment variables for port binding
+4. Return ONLY executable bash commands, one per line
+5. Skip npm install if not necessary (assume dependencies might be installed)
+6. Ensure commands bind to 0.0.0.0 (not localhost) for external access
+7. Focus on RESTART commands, not initial setup
+
+Example output format:
+npm install
+export PORT=${availablePort}
+npm run dev
+
+Do NOT include explanations, comments, or invalid commands.`
+              },
+              {
+                role: "user",
+                content: `Package.json for restarting existing project on Ubuntu Linux VM:\n${JSON.stringify(packageJson, null, 2)}\n\nGenerate minimal bash commands to restart this project in development mode on port ${availablePort}.`
+              }
+            ],
+            temperature: 0.1
+          });
+
+          commands = openaiResponse.choices[0].message.content?.split('\n').filter(cmd => cmd.trim() !== '' && !cmd.startsWith('#')) || [];
+
+          // Filter out any invalid commands
+          commands = commands.filter(cmd => {
+            const trimmed = cmd.trim();
+            return trimmed.length > 0 &&
+              !trimmed.toLowerCase().includes('as a') &&
+              !trimmed.toLowerCase().includes('please provide') &&
+              !trimmed.includes('(') &&
+              !trimmed.includes(')') &&
+              (trimmed.startsWith('npm') || trimmed.startsWith('export') || trimmed.startsWith('cd') || trimmed.startsWith('python') || trimmed.startsWith('pip'));
+          });
+
+          this.log(`🤖 AI generated ${commands.length} restart commands`);
+        } catch (jsonError) {
+          this.log('⚠️ Could not parse package.json, using fallback commands');
+          commands = [
+            'npm install',
+            `export PORT=${availablePort}`,
+            `export HOST=0.0.0.0`,
+            'npm run dev || npm start'
+          ];
+        }
+      } else if (requirementsTxtExists.stdout.trim() === 'exists' || appPyExists.stdout.trim() === 'exists' || mainPyExists.stdout.trim() === 'exists') {
+        // Python/Flask project
+        projectType = 'python';
+        this.log('🐍 Detected Python/Flask project on VM');
+
+        // Determine the main file
+        let mainFile = 'app.py';
+        if (appPyExists.stdout.trim() === 'exists') {
+          mainFile = 'app.py';
+        } else if (mainPyExists.stdout.trim() === 'exists') {
+          mainFile = 'main.py';
+        }
+
+        this.log(`🎯 Using main file: ${mainFile}`);
+
+        // Generate Python/Flask restart commands
+        if (requirementsTxtExists.stdout.trim() === 'exists') {
+          commands = [
+            'python3 -m pip install --user -r requirements.txt',
+            `export FLASK_APP=${mainFile}`,
+            `export FLASK_ENV=development`,
+            `export FLASK_RUN_PORT=${availablePort}`,
+            `export FLASK_RUN_HOST=0.0.0.0`,
+            `export PYTHONUNBUFFERED=1`,
+            `python3 -m flask run --host=0.0.0.0 --port=${availablePort}`
+          ];
+        } else {
+          commands = [
+            'python3 -m pip install --user flask',
+            `export FLASK_APP=${mainFile}`,
+            `export FLASK_ENV=development`,
+            `export FLASK_RUN_PORT=${availablePort}`,
+            `export FLASK_RUN_HOST=0.0.0.0`,
+            `export PYTHONUNBUFFERED=1`,
+            `python3 -m flask run --host=0.0.0.0 --port=${availablePort}`
+          ];
+        }
+
+        this.log(`🐍 Generated ${commands.length} Python/Flask restart commands`);
+      } else {
+        // Unknown project type - try basic restart
+        this.log('❓ Unknown project type, using basic restart commands');
+        projectType = 'unknown';
+        
+        // Get list of files in the project on VM
+        const filesListResult = await ssh.execCommand(`ls ${vmProjectPath}`);
+        const files = filesListResult.stdout.split('\n').filter((f: string) => f.trim());
+
+        if (files.includes('package.json')) {
+          commands = [
+            'npm install',
+            `export PORT=${availablePort}`,
+            `export HOST=0.0.0.0`,
+            'npm run dev || npm start'
+          ];
+        } else if (files.some((f: string) => f.includes('.py'))) {
+          commands = [
+            'python3 -m pip install --user flask',
+            `export FLASK_APP=app.py`,
+            `export FLASK_ENV=development`,
+            `python3 -m flask run --host=0.0.0.0 --port=${availablePort}`
+          ];
+        } else {
+          throw new Error('Could not determine project type for restart');
+        }
+      }
+
+      // Ensure we have commands to execute
+      if (commands.length === 0) {
+        throw new Error('No restart commands generated');
+      }
+
+      // Execute setup commands (all except the last one which starts the server)
+      this.log('⚙️ Executing restart commands...');
+      const setupCommands = commands.slice(0, -1);
+      const startCommand = commands[commands.length - 1];
+
+      for (let i = 0; i < setupCommands.length; i++) {
+        const command = setupCommands[i];
+        this.log(`📋 [${i + 1}/${setupCommands.length}] Running: ${command}`);
+
+        const result = await ssh.execCommand(command, { cwd: vmProjectPath });
+
+        if (result.stderr && !result.stderr.includes('npm WARN')) {
+          this.log(`⚠️ Command warning: ${result.stderr}`);
+        }
+
+        if (result.stdout) {
+          this.log(`📄 Output: ${result.stdout.substring(0, 200)}${result.stdout.length > 200 ? '...' : ''}`);
+        }
+      }
+
+      // Start the server in the background
+      if (startCommand) {
+        this.log(`🚀 Starting server in background: ${startCommand}`);
+
+        // Create restart script
+        const restartScript = `#!/bin/bash
+cd ${vmProjectPath}
+export PORT=${availablePort}
+
+# Start the new server in background with proper logging
+nohup ${startCommand} > server.log 2>&1 &
+NEW_PID=$!
+echo $NEW_PID > server.pid
+
+# Wait a moment and verify the process is still running
+sleep 3
+if ps -p $NEW_PID > /dev/null 2>&1; then
+    echo "Server restarted successfully with PID: $NEW_PID"
+    echo "Server is running and listening on port ${availablePort}"
+else
+    echo "Server failed to restart. Check server.log for details."
+    cat server.log 2>/dev/null || echo "No log file found"
+    exit 1
+fi
+`;
+
+        // Write and execute the restart script
+        await ssh.execCommand(`cat > ${vmProjectPath}/restart_server.sh << 'EOF'
+${restartScript}
+EOF`);
+
+        await ssh.execCommand(`chmod +x ${vmProjectPath}/restart_server.sh`);
+        const startResult = await ssh.execCommand(`${vmProjectPath}/restart_server.sh`, { cwd: vmProjectPath });
+
+        this.log(`🎯 Server restart result: ${startResult.stdout}`);
+        if (startResult.stderr) {
+          this.log(`⚠️ Server restart stderr: ${startResult.stderr}`);
+        }
+
+        // Verification
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        const verifyResult = await ssh.execCommand(`ps aux | grep "${availablePort}" | grep -v grep`);
+        if (verifyResult.stdout) {
+          this.log(`✅ Server verification: Process found running on port ${availablePort}`);
+        } else {
+          this.log(`⚠️ Server verification: No process found on port ${availablePort}`);
+          const logResult = await ssh.execCommand(`cat ${vmProjectPath}/server.log 2>/dev/null || echo "No log file"`);
+          this.log(`📄 Server logs: ${logResult.stdout}`);
+        }
+      }
+
+      const vmIP = await this.getVmExternalIP();
+      const projectUrl = `http://${vmIP}:${availablePort}`;
+
+      this.log('🎉 Project restart completed successfully!');
+      this.log(`🌐 Project URL: ${projectUrl}`);
+      this.log('✅ Server is running with preserved agent modifications');
+
+      return {
+        success: true,
+        vmIP,
+        port: availablePort,
+        projectUrl,
+        commands: commands,
+        repositoryId
+      };
+
+    } catch (error) {
+      this.log(`❌ Project restart failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw error;
+    } finally {
+      ssh.dispose();
+      this.log('🔌 Disconnected from VM (server continues running)');
     }
   }
 }
